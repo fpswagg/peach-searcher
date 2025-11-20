@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MediaItem } from "@/data/media";
+import { MediaItem } from "@/types/media";
 import {
   Dialog,
   DialogContent,
@@ -140,6 +140,7 @@ export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
                       height={800}
                       className="max-w-full max-h-full w-auto h-auto object-contain rounded-lg relative z-10"
                       sizes="(max-width: 768px) 98vw, (max-width: 1200px) 90vw, 80vw"
+                      unoptimized
                       onError={() => {
                         setImageError(true);
                         setImageLoading(false);

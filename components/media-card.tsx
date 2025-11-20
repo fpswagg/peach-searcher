@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MediaItem } from "@/data/media";
+import { MediaItem } from "@/types/media";
 import { Play, AlertCircle } from "lucide-react";
 import Image from "next/image";
 
@@ -35,7 +35,7 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
 
   // Determine width based on item ID for consistent variety
   // Extract number from ID and use modulo to determine width
-  const idNumber = parseInt(item.id.replace(/\D/g, '')) || 0;
+  const idNumber = item.id ? parseInt(item.id.replace(/\D/g, '')) || 0 : Math.random() * 1000;
   const spanTwo = idNumber % 4 === 0; // Every 4th item is wider
 
   return (
@@ -67,6 +67,7 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
                   fill
                   className={`object-cover transition-all duration-300 group-hover:scale-105 ${imageLoading ? 'opacity-0' : 'opacity-100'}`}
                   sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
+                  unoptimized
                   onError={() => {
                     setImageError(true);
                     setImageLoading(false);
@@ -104,6 +105,7 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
                   fill
                   className={`object-cover transition-all duration-300 group-hover:scale-105 ${imageLoading ? 'opacity-0' : 'opacity-100'}`}
                   sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
+                  unoptimized
                   onError={() => {
                     setImageError(true);
                     setImageLoading(false);

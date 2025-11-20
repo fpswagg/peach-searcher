@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { MediaItem, mediaItems, ITEMS_PER_PAGE } from "@/data/media";
+import { MediaItem } from "@/types/media";
+
+const ITEMS_PER_PAGE = 24;
 import { MediaCard } from "@/components/media-card";
 import { MediaDialog } from "@/components/media-dialog";
 import { Image as ImageIcon, Video, Filter } from "lucide-react";
@@ -9,37 +11,93 @@ import { Image as ImageIcon, Video, Filter } from "lucide-react";
 export type FilterType = "all" | "image" | "video";
 
 export default function GalleryPage() {
-  const [loadedCount, setLoadedCount] = useState(ITEMS_PER_PAGE);
+  const [allItems, setAllItems] = useState<MediaItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [hasMoreItems, setHasMoreItems] = useState(true);
   const [selectedItem, setSelectedItem] = useState<MediaItem | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [filter, setFilter] = useState<FilterType>("all");
+  const [currentType, setCurrentType] = useState<string>("All");
+  const [types, setTypes] = useState<string[]>([]);
+  const [isLoadingTypes, setIsLoadingTypes] = useState(true);
   const observerTarget = useRef<HTMLDivElement>(null);
+
+  // Fetch available types
+  useEffect(() => {
+    const fetchTypes = async () => {
+      try {
+        const response = await fetch('/api/types');
+        const result = await response.json();
+        if (result.success) {
+          setTypes(result.data);
+        }
+      } catch (error) {
+        console.error("Error fetching types:", error);
+      } finally {
+        setIsLoadingTypes(false);
+      }
+    };
+    fetchTypes();
+  }, []);
+
+  // Fetch media items from API
+  const fetchMediaItems = useCallback(async (type: string, limit: number, append: boolean = false) => {
+    try {
+      if (!append) setIsLoading(true);
+      else setIsLoadingMore(true);
+
+      const response = await fetch(`/api/media?type=${encodeURIComponent(type)}&limit=${limit}`);
+      const result = await response.json();
+
+      if (result.success) {
+        const newItems = result.data;
+        // If we got fewer items than requested, we've reached the end
+        if (newItems.length < limit) {
+          setHasMoreItems(false);
+        }
+        
+        if (append) {
+          setAllItems((prev) => [...prev, ...newItems]);
+        } else {
+          setAllItems(newItems);
+          setHasMoreItems(true); // Reset when loading new type
+        }
+      } else {
+        console.error("Error fetching media:", result.error);
+        setHasMoreItems(false);
+      }
+    } catch (error) {
+      console.error("Error fetching media:", error);
+    } finally {
+      setIsLoading(false);
+      setIsLoadingMore(false);
+    }
+  }, []);
+
+  // Initial load
+  useEffect(() => {
+    fetchMediaItems(currentType, ITEMS_PER_PAGE, false);
+  }, [currentType, fetchMediaItems]);
 
   // Filter media items based on selected filter
   const filteredItems = useMemo(() => {
-    if (filter === "all") return mediaItems;
-    return mediaItems.filter((item) => item.type === filter);
-  }, [filter]);
-
-  // Get items to display (loaded items from filtered list)
-  const displayedItems = useMemo(() => {
-    return filteredItems.slice(0, loadedCount);
-  }, [filteredItems, loadedCount]);
-
-  const hasMore = loadedCount < filteredItems.length;
+    if (filter === "all") return allItems;
+    return allItems.filter((item) => item.type === filter);
+  }, [allItems, filter]);
 
   // Load more items when scrolling
   const loadMore = useCallback(() => {
-    if (hasMore) {
-      setLoadedCount((prev) => Math.min(prev + ITEMS_PER_PAGE, filteredItems.length));
+    if (hasMoreItems && !isLoadingMore && !isLoading) {
+      fetchMediaItems(currentType, ITEMS_PER_PAGE, true);
     }
-  }, [hasMore, filteredItems.length]);
+  }, [hasMoreItems, isLoadingMore, isLoading, currentType, fetchMediaItems]);
 
   // Intersection Observer for infinite scroll
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && hasMore) {
+        if (entries[0].isIntersecting && hasMoreItems && !isLoadingMore && !isLoading) {
           loadMore();
         }
       },
@@ -56,12 +114,7 @@ export default function GalleryPage() {
         observer.unobserve(currentTarget);
       }
     };
-  }, [hasMore, loadMore]);
-
-  // Reset loaded count when filter changes
-  useEffect(() => {
-    setLoadedCount(ITEMS_PER_PAGE);
-  }, [filter]);
+  }, [hasMoreItems, isLoadingMore, isLoading, loadMore]);
 
   const handleItemClick = (item: MediaItem) => {
     setSelectedItem(item);
@@ -74,15 +127,30 @@ export default function GalleryPage() {
         {/* Header */}
         <div className="mb-8 text-center">
           <h1 className="text-5xl font-bold mb-3 text-base-content">Media Gallery</h1>
-          {displayedItems.length === 0 && filteredItems.length > 0 && (
-            <p className="text-lg text-base-content/70">
-              <span className="loading loading-spinner loading-md text-primary mr-2"></span>
-              {filter === "all" ? "Loading beautiful images and videos" : filter === "image" ? "Loading images" : "Loading videos"}
-            </p>
-          )}
         </div>
 
-        {/* Filter */}
+        {/* Type Selector */}
+        {!isLoadingTypes && (
+          <div className="mb-8 flex justify-center">
+            <div className="join flex-wrap justify-center gap-2">
+              {types.map((type) => (
+                <button
+                  key={type}
+                  onClick={() => {
+                    setCurrentType(type);
+                    setAllItems([]);
+                    setHasMoreItems(true);
+                  }}
+                  className={`btn join-item ${currentType === type ? "btn-primary" : "btn-outline"}`}
+                >
+                  {type}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Media Type Filter */}
         <div className="mb-8 flex justify-center">
           <div className="join">
             <button
@@ -110,12 +178,19 @@ export default function GalleryPage() {
         </div>
 
         {/* Gallery Grid Layout */}
-        {displayedItems.length > 0 ? (
+        {isLoading && filteredItems.length === 0 ? (
+          <div className="text-center py-16">
+            <div className="flex flex-col items-center gap-4">
+              <span className="loading loading-spinner loading-lg text-primary"></span>
+              <p className="text-lg text-base-content/60">Loading media...</p>
+            </div>
+          </div>
+        ) : filteredItems.length > 0 ? (
           <>
             <div className="flex flex-wrap gap-4 mb-8 justify-center">
-              {displayedItems.map((item) => (
+              {filteredItems.map((item, index) => (
                 <MediaCard
-                  key={item.id}
+                  key={item.id || `item-${index}-${item.url}`}
                   item={item}
                   onClick={() => handleItemClick(item)}
                   showBadge={filter === "all"}
@@ -124,14 +199,16 @@ export default function GalleryPage() {
             </div>
 
             {/* Infinite Scroll Trigger */}
-            {hasMore && (
+            {hasMoreItems && (
               <div ref={observerTarget} className="flex justify-center items-center py-8">
-                <span className="loading loading-spinner loading-lg text-primary"></span>
+                {isLoadingMore && (
+                  <span className="loading loading-spinner loading-lg text-primary"></span>
+                )}
               </div>
             )}
 
             {/* End of Results */}
-            {!hasMore && displayedItems.length > 0 && (
+            {!hasMoreItems && filteredItems.length > 0 && !isLoadingMore && (
               <div className="text-center py-8 text-base-content/60">
                 <p>You&apos;ve reached the end!</p>
               </div>
@@ -139,14 +216,7 @@ export default function GalleryPage() {
           </>
         ) : (
           <div className="text-center py-16">
-            {filteredItems.length > 0 ? (
-              <div className="flex flex-col items-center gap-4">
-                <span className="loading loading-spinner loading-lg text-primary"></span>
-                <p className="text-lg text-base-content/60">Loading media...</p>
-              </div>
-            ) : (
-              <p className="text-lg text-base-content/60">No items found with the selected filter.</p>
-            )}
+            <p className="text-lg text-base-content/60">No items found with the selected filter.</p>
           </div>
         )}
       </div>
