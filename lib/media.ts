@@ -115,10 +115,82 @@ function generateMediaId(url: string, index?: number): string {
   }
 }
 
-// Convert a Reddit post to a MediaItem
-async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: boolean, itemCounter: number): Promise<MediaItem | null> {
+// Extract gallery images from a Reddit post
+function extractGalleryImages(redditPost: RedditPost, itemCounter: number): MediaItem[] {
+  const galleryItems: MediaItem[] = [];
+  
+  if (!redditPost.gallery_data || !redditPost.media_metadata) {
+    return galleryItems;
+  }
+
+  const galleryData = redditPost.gallery_data;
+  const mediaMetadata = redditPost.media_metadata;
+
+  // Iterate through each item in the gallery
+  for (let i = 0; i < galleryData.items.length; i++) {
+    const galleryItem = galleryData.items[i];
+    const mediaId = galleryItem.media_id;
+    const metadata = mediaMetadata[mediaId];
+
+    if (!metadata) {
+      continue;
+    }
+
+    // Get the source image URL (highest quality)
+    let imageUrl: string | null = null;
+    let thumbnailUrl: string | undefined;
+
+    // Try to get source image (s.u)
+    if (metadata.s?.u) {
+      imageUrl = metadata.s.u.replace(/&amp;/g, '&');
+    }
+
+    // Try to get original image if available (o array)
+    if (metadata.o && metadata.o.length > 0) {
+      const original = metadata.o[metadata.o.length - 1]; // Get highest resolution
+      if (original?.u) {
+        imageUrl = original.u.replace(/&amp;/g, '&');
+      }
+    }
+
+    // Get thumbnail from preview images (p array)
+    if (metadata.p && metadata.p.length > 0) {
+      const preview = metadata.p[metadata.p.length - 1]; // Get highest resolution preview
+      if (preview?.u) {
+        thumbnailUrl = preview.u.replace(/&amp;/g, '&');
+      }
+    }
+
+    // If we have an image URL, create a media item
+    if (imageUrl) {
+      galleryItems.push({
+        id: generateMediaId(imageUrl, itemCounter + i),
+        type: "image",
+        url: imageUrl,
+        thumbnail: thumbnailUrl,
+        name: `${redditPost.title} (${i + 1}/${galleryData.items.length})`,
+        description: redditPost.selftext || undefined,
+        created_utc: redditPost.created_utc,
+      });
+    }
+  }
+
+  return galleryItems;
+}
+
+// Convert a Reddit post to a MediaItem or array of MediaItems (for galleries)
+async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: boolean, itemCounter: number): Promise<MediaItem | MediaItem[] | null> {
   if (!redditPost.url) {
     return null;
+  }
+
+  // Check if it's a gallery post (has multiple images)
+  if (redditPost.gallery_data && redditPost.media_metadata) {
+    const galleryItems = extractGalleryImages(redditPost, itemCounter);
+    if (galleryItems.length > 0) {
+      return galleryItems; // Return array of gallery images
+    }
+    // If gallery extraction failed, fall through to regular processing
   }
 
   // Check if it's a Redgif
@@ -315,22 +387,43 @@ export async function generateMediaItems(type: string): Promise<MediaItem[]> {
         }
 
         // Filter posts that are valid media and convert them
+        // Include gallery posts (they have gallery_data) and regular media posts
         const validPosts = redditResponse.data.filter(
-          post => post.url && (!hasIDRG(post.url) || acceptsRedGifs) && (post.is_video || post.is_reddit_media_domain)
+          post => {
+            // Gallery posts don't need to match the regular criteria
+            if (post.gallery_data && post.media_metadata) {
+              return true;
+            }
+            // Regular posts need to match the existing criteria
+            return post.url && (!hasIDRG(post.url) || acceptsRedGifs) && (post.is_video || post.is_reddit_media_domain);
+          }
         );
 
         // Convert posts to media items
         const mediaItems: MediaItem[] = [];
         for (const redditPost of validPosts) {
-          // Skip if already exists
-          if (existingUrls.has(redditPost.url)) {
+          // Skip if already exists (for non-gallery posts)
+          if (!redditPost.gallery_data && existingUrls.has(redditPost.url)) {
             continue;
           }
 
-          const mediaItem = await convertPostToMediaItem(redditPost, acceptsRedGifs, itemCounter++);
-          if (mediaItem && !existingUrls.has(mediaItem.url)) {
-            mediaItems.push(mediaItem);
-            existingUrls.add(mediaItem.url); // Track to avoid duplicates within this batch
+          const result = await convertPostToMediaItem(redditPost, acceptsRedGifs, itemCounter);
+          
+          if (result) {
+            // Handle both single items and arrays (from galleries)
+            const items = Array.isArray(result) ? result : [result];
+            let addedCount = 0;
+            
+            for (const mediaItem of items) {
+              if (!existingUrls.has(mediaItem.url)) {
+                mediaItems.push(mediaItem);
+                existingUrls.add(mediaItem.url); // Track to avoid duplicates within this batch
+                addedCount++;
+              }
+            }
+            
+            // Increment counter by the number of items actually added
+            itemCounter += addedCount;
           }
         }
         return mediaItems;
