@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MediaItem } from "@/types/media";
 import { Play, AlertCircle } from "lucide-react";
 import Image from "next/image";
@@ -15,6 +15,13 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
   const [imageError, setImageError] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
+
+  // Reset error and loading states when item changes
+  useEffect(() => {
+    setImageError(false);
+    setImageLoaded(false);
+    setImageLoading(true);
+  }, [item.id, item.url, item.thumbnail]);
 
   const handleImageLoad = () => {
     setImageLoaded(true);
@@ -65,7 +72,7 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
                   src={item.thumbnail}
                   alt={item.name}
                   fill
-                  className={`object-cover transition-all duration-300 group-hover:scale-105 ${imageLoading ? 'opacity-0' : 'opacity-100'}`}
+                  className={`object-contain transition-all duration-300 group-hover:scale-105 ${imageLoading ? 'opacity-0' : 'opacity-100'}`}
                   sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
                   unoptimized
                   onError={() => {
@@ -103,7 +110,7 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
                   src={item.url}
                   alt={item.name}
                   fill
-                  className={`object-cover transition-all duration-300 group-hover:scale-105 ${imageLoading ? 'opacity-0' : 'opacity-100'}`}
+                  className={`object-contain transition-all duration-300 group-hover:scale-105 ${imageLoading ? 'opacity-0' : 'opacity-100'}`}
                   sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
                   unoptimized
                   onError={() => {

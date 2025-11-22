@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MediaItem } from "@/types/media";
 import {
   Dialog,
@@ -24,12 +24,30 @@ export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
   const [imageLoading, setImageLoading] = useState(true);
   const [videoLoading, setVideoLoading] = useState(true);
 
+  // Reset error and loading states when item changes
+  useEffect(() => {
+    if (item) {
+      setImageError(false);
+      setVideoError(false);
+      setImageLoading(true);
+      setVideoLoading(true);
+    }
+  }, [item]);
+
   if (!item) return null;
 
   const handleDownload = async () => {
     try {
-      // Fetch the file as a blob
-      const response = await fetch(item.url);
+      // Try to fetch the file as a blob first
+      const response = await fetch(item.url, {
+        mode: 'cors',
+        credentials: 'omit',
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
       const blob = await response.blob();
       
       // Create object URL from blob
@@ -38,7 +56,12 @@ export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
       // Get file extension from URL or default based on type
       const urlExtension = item.url.split('.').pop()?.split('?')[0] || '';
       const extension = urlExtension || (item.type === 'video' ? 'mp4' : 'jpg');
-      const fileName = `${item.name}.${extension}`;
+      
+      // Sanitize file name
+      const sanitizedName = item.name
+        .replace(/[^a-z0-9]/gi, '_')
+        .substring(0, 100); // Limit length
+      const fileName = `${sanitizedName}.${extension}`;
       
       // Create download link
       const link = document.createElement("a");
@@ -48,11 +71,11 @@ export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
       link.click();
       document.body.removeChild(link);
       
-      // Clean up the object URL
-      URL.revokeObjectURL(blobUrl);
+      // Clean up the object URL after a delay
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
     } catch (error) {
       console.error('Download failed:', error);
-      // Fallback: open in new tab
+      // Fallback: open in new tab (works for CORS issues)
       window.open(item.url, "_blank");
     }
   };

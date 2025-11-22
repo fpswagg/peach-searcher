@@ -43,9 +43,18 @@ function saveAllMediaItems(media: Record<string, MediaItem[]>) {
 }
 
 function appendMediaItems(type: string, media: MediaItem[]) {
+  if (!media || media.length === 0) return;
+  
   const allMedia = getAllMedia();
-  allMedia[type] = [...media, ...(allMedia[type] || [])];
-  fs.writeFileSync(mediaPath, JSON.stringify(allMedia, null, 2));
+  const existing = allMedia[type] || [];
+  // Filter out duplicates by URL before appending
+  const existingUrls = new Set(existing.map(item => item.url));
+  const newItems = media.filter(item => !existingUrls.has(item.url));
+  
+  if (newItems.length > 0) {
+    allMedia[type] = [...newItems, ...existing];
+    fs.writeFileSync(mediaPath, JSON.stringify(allMedia, null, 2));
+  }
 }
 
 function appendAllMediaItems(media: Record<string, MediaItem[]>) {
@@ -83,232 +92,236 @@ export function getTypes(): string[] {
 
 // Generate a unique ID for a media item based on its URL
 function generateMediaId(url: string, index?: number): string {
-  // Use a hash of the URL for consistency, or fallback to timestamp + index
-  const urlHash = url.split('/').pop()?.split('?')[0] || '';
-  const hash = urlHash.length > 0 ? urlHash.substring(0, 20) : Date.now().toString();
-  return `media-${hash}-${index || Math.random().toString(36).substring(7)}`;
+  try {
+    // Use a hash of the URL for consistency
+    const urlHash = url.split('/').pop()?.split('?')[0] || '';
+    // Create a simple hash from the URL for deterministic IDs
+    let hash = 0;
+    for (let i = 0; i < url.length; i++) {
+      const char = url.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32bit integer
+    }
+    const hashStr = Math.abs(hash).toString(36).substring(0, 10);
+    const urlPart = urlHash.length > 0 ? urlHash.substring(0, 15) : hashStr;
+    return `media-${urlPart}-${index !== undefined ? index : hashStr}`;
+  } catch (error) {
+    // Fallback to timestamp-based ID
+    return `media-${Date.now()}-${index || Math.random().toString(36).substring(7)}`;
+  }
 }
 
-async function generateMediaItems(type?: string): Promise<MediaItem[]> {
-  const allTypes = type ? [type] : getTypes();
-  const allMedia = getAllMedia();
-  let newMedia: MediaItem[] = [];
-  let itemCounter = 0;
-
-  const subredditBank = {} as Record<string, MediaItem[]>;
-
-  async function getPosts(subreddit: string, acceptsRedGifs: boolean, count?: number): Promise<MediaItem[]> {
-    if (subredditBank[subreddit] && subredditBank[subreddit].length >= (count||0))
-      if (count) return subredditBank[subreddit].slice(0, count);
-      else return subredditBank[subreddit];
-    
-    const redditResponse = await getRedditPosts(subreddit, count);
-    if (redditResponse.error || !redditResponse.data || !Array.isArray(redditResponse.data)) {
-      console.error(`Error fetching posts from ${subreddit}:`, redditResponse.error);
-      return [];
-    }
-    
-    const posts = (await Promise.all(redditResponse.data.filter(
-      post => post.url && (!hasIDRG(post.url) || acceptsRedGifs) && (post.is_video || post.is_reddit_media_domain)
-    ).map(async redditPost => {
-      if (hasIDRG(redditPost.url)) {
-        const redgif = await getGIFs(extractIdRG(redditPost.url)!);
-
-        if (redgif.error || !redgif.gifs.length) {
-          console.error("Error loading redgif: ", redditPost.url);
-          return null;
-        }
-
-        const url = extractURLRG(redgif.gifs[0].urls);
-        const thumbnail = extractThumbnailRG(redgif.gifs[0].urls);
-        const duration = redgif.gifs[0].duration;
-        
-        if (!url) {
-          console.error("Failed to extract URL from redgif:", redgif.gifs[0].urls);
-          return null;
-        }
-        
-        return {
-          id: generateMediaId(url, itemCounter++),
-          type: "video",
-          url,
-          thumbnail,
-          duration,
-          name: redditPost.title,
-          description: redditPost.selftext||undefined,
-        };
-      } else {
-        if (!redditPost.url) {
-          console.error("Reddit post missing URL:", redditPost);
-          return null;
-        }
-
-        // Check if it's a Reddit video (v.redd.it URL or is_video flag)
-        const isRedditVideo = redditPost.is_video || redditPost.url.includes('v.redd.it');
-        
-        if (isRedditVideo) {
-          // For Reddit videos, try to get the actual video URL from media object
-          let videoUrl = redditPost.url;
-          let thumbnail = redditPost.thumbnail;
-          
-          // Try to extract video URL from media object
-          if (redditPost.media?.reddit_video?.fallback_url) {
-            videoUrl = redditPost.media.reddit_video.fallback_url;
-          } else if (redditPost.secure_media?.reddit_video?.fallback_url) {
-            videoUrl = redditPost.secure_media.reddit_video.fallback_url;
-          }
-          
-          // Get thumbnail from media if available
-          if (redditPost.media?.reddit_video?.thumbnail) {
-            thumbnail = redditPost.media.reddit_video.thumbnail;
-          } else if (redditPost.thumbnail && redditPost.thumbnail !== 'self' && redditPost.thumbnail !== 'default' && redditPost.thumbnail !== 'nsfw') {
-            // Use provided thumbnail if it's valid
-            // Decode HTML entities in thumbnail URL if needed
-            thumbnail = redditPost.thumbnail.replace(/&amp;/g, '&');
-          }
-
-          return {
-            id: generateMediaId(videoUrl, itemCounter++),
-            type: "video",
-            url: videoUrl,
-            thumbnail: thumbnail || undefined,
-            name: redditPost.title,
-            description: redditPost.selftext||undefined,
-          };
-        } else {
-          // It's an image
-          return {
-            id: generateMediaId(redditPost.url, itemCounter++),
-            name: redditPost.title,
-            description: redditPost.selftext||undefined,
-            type: "image",
-            url: redditPost.url,
-          };
-        }
-      }
-    }))).filter(Boolean) as MediaItem[];
-
-    
-    subredditBank[subreddit] = posts;
-    return posts;
+// Convert a Reddit post to a MediaItem
+async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: boolean, itemCounter: number): Promise<MediaItem | null> {
+  if (!redditPost.url) {
+    return null;
   }
 
-  for (const type of allTypes) {
+  // Check if it's a Redgif
+  if (hasIDRG(redditPost.url)) {
+    if (!acceptsRedGifs) {
+      return null;
+    }
+
+    const redgifId = extractIdRG(redditPost.url);
+    if (!redgifId) {
+      return null;
+    }
+
+    const redgif = await getGIFs(redgifId);
+    if (redgif.error || !redgif.gifs.length) {
+      return null;
+    }
+
+    const url = extractURLRG(redgif.gifs[0].urls);
+    const thumbnail = extractThumbnailRG(redgif.gifs[0].urls);
+    const duration = redgif.gifs[0].duration;
+
+    if (!url) {
+      return null;
+    }
+
+    return {
+      id: generateMediaId(url, itemCounter),
+      type: "video",
+      url,
+      thumbnail,
+      duration,
+      name: redditPost.title,
+      description: redditPost.selftext || undefined,
+    };
+  }
+
+  // Check if it's a Reddit video
+  const isRedditVideo = redditPost.is_video || redditPost.url.includes('v.redd.it');
+
+  if (isRedditVideo) {
+    let videoUrl = redditPost.url;
+    let thumbnail = redditPost.thumbnail;
+
+    // Try to extract video URL from media object
+    if (redditPost.media?.reddit_video?.fallback_url) {
+      videoUrl = redditPost.media.reddit_video.fallback_url;
+    } else if (redditPost.secure_media?.reddit_video?.fallback_url) {
+      videoUrl = redditPost.secure_media.reddit_video.fallback_url;
+    }
+
+    // Get thumbnail from media if available
+    if (redditPost.media?.reddit_video?.thumbnail) {
+      thumbnail = redditPost.media.reddit_video.thumbnail;
+    } else if (redditPost.thumbnail && redditPost.thumbnail !== 'self' && redditPost.thumbnail !== 'default' && redditPost.thumbnail !== 'nsfw') {
+      thumbnail = redditPost.thumbnail.replace(/&amp;/g, '&');
+    }
+
+    return {
+      id: generateMediaId(videoUrl, itemCounter),
+      type: "video",
+      url: videoUrl,
+      thumbnail: thumbnail || undefined,
+      name: redditPost.title,
+      description: redditPost.selftext || undefined,
+    };
+  }
+
+  // It's an image (must be from reddit media domain)
+  if (!redditPost.is_reddit_media_domain) {
+    return null;
+  }
+
+  return {
+    id: generateMediaId(redditPost.url, itemCounter),
+    name: redditPost.title,
+    description: redditPost.selftext || undefined,
+    type: "image",
+    url: redditPost.url,
+  };
+}
+
+// Fetch up to 100 recent posts for a type and convert them to media items
+export async function generateMediaItems(type?: string): Promise<MediaItem[]> {
+  const allTypes = type ? [type] : getTypes();
+  const allMedia = getAllMedia();
+  // const MAX_POSTS_PER_TYPE = 100;
+  let itemCounter = 0;
+
+  for (const currentType of allTypes) {
+    let typeSubreddits: string[] = [];
+    
     // Handle "All" type - use _AllTypes from types.json
-    if (type === "All") {
+    if (currentType === "All") {
       const typeConfig = types["_AllTypes"] as (string|number)[] | undefined;
-      // For "All", we need to process each type in _AllTypes
       if (typeConfig && Array.isArray(typeConfig)) {
         const allTypesList = typeConfig.filter((t): t is string => typeof t === "string");
+        // Collect all subreddits from all sub-types
         for (const subType of allTypesList) {
           if (!types[subType] || !Array.isArray(types[subType])) {
-            console.warn(`Sub-type "${subType}" not found in types.json or is not an array`);
             continue;
           }
-          
-          const acceptsRedGifs = !((types["_NoRedGifs"]||[]) as string[]).includes(subType);
           const subreddits = randomize(...types[subType]);
-          const mainSubreddits = subreddits.reduce((acc, curr) => {
-            if (acc.includes(curr)) return acc;
-            acc.push(curr);
-            return acc;
-          }, [] as string[]);
-          const mainSubredditsPosts = Object.fromEntries(await Promise.all(mainSubreddits.map(async (subreddit) => [subreddit, await getPosts(subreddit, acceptsRedGifs)] as [string, MediaItem[]])));
-          const existingMedia = allMedia["All"] || [];
-          const filteredPosts = Object.fromEntries(Object.entries(mainSubredditsPosts).map(([subreddit, posts]) => [subreddit, posts.filter(post => !existingMedia.map(x=>x.url).includes(post.url))]));
-
-          const finalPosts: string[] = [];
-
-          function finalPost(subreddit: string, remaining?: string[]): MediaItem|null {
-            const subredditPosts = filteredPosts[subreddit] || [];
-            const post = subredditPosts.filter(x=>x&&!finalPosts.includes(x.url))[0];
-
-            if (!post) {
-              const remaining_ = remaining || [...subreddits, ...types[subType].filter(x=>typeof x === "string"&&!subreddits.includes(x)).sort(()=>Math.random()-0.5) as string[]].filter(x=>x!=subreddit);
-              if (remaining_.length)
-                return finalPost(choose(...remaining_), remaining_);
-              else
-                return null;
-            } else {
-              finalPosts.push(post.url);
-              return post;
-            }
-          }
-          
-          const posts = subreddits.map(p=>finalPost(p)).filter(Boolean) as MediaItem[];
-
-          newMedia.push(...posts);
-          appendMediaItems("All", posts);
+          typeSubreddits.push(...subreddits.filter((s): s is string => typeof s === "string"));
         }
-        continue;
       } else {
         console.warn(`"_AllTypes" not found in types.json or is not an array`);
         continue;
       }
+    } else {
+      // Skip if type doesn't exist in types object
+      if (!types[currentType] || !Array.isArray(types[currentType])) {
+        console.warn(`Type "${currentType}" not found in types.json or is not an array`);
+        continue;
+      }
+      const subreddits = randomize(...types[currentType]);
+      typeSubreddits = subreddits.filter((s): s is string => typeof s === "string");
     }
+
+    // Remove duplicates from subreddits
+    const uniqueSubreddits = Array.from(new Set(typeSubreddits));
     
-    // Skip if type doesn't exist in types object
-    if (!types[type] || !Array.isArray(types[type])) {
-      console.warn(`Type "${type}" not found in types.json or is not an array`);
+    if (uniqueSubreddits.length === 0) {
       continue;
     }
 
-    const acceptsRedGifs = !((types["_NoRedGifs"]||[]) as string[]).includes(type);
-    const subreddits = randomize(...types[type]);
-    const mainSubreddits = subreddits.reduce((acc, curr) => {
-      if (acc.includes(curr)) return acc;
-      acc.push(curr);
-      return acc;
-    }, [] as string[]);
-    const mainSubredditsPosts = Object.fromEntries(await Promise.all(mainSubreddits.map(async (subreddit) => [subreddit, await getPosts(subreddit, acceptsRedGifs)] as [string, MediaItem[]])));
-    const existingMedia = allMedia[type] || [];
-    const filteredPosts = Object.fromEntries(Object.entries(mainSubredditsPosts).map(([subreddit, posts]) => [subreddit, posts.filter(post => !existingMedia.map(x=>x.url).includes(post.url))]));
+    // Fetch posts from all subreddits
+    const acceptsRedGifs = !((types["_NoRedGifs"] || []) as string[]).includes(currentType);
+    const allPosts: MediaItem[] = [];
+    const existingMedia = allMedia[currentType] || [];
+    const existingUrls = new Set(existingMedia.map(x => x.url));
 
-    const finalPosts: string[] = [];
+    // Fetch posts from each subreddit (up to 100 per subreddit, but we'll limit total to 100)
+    for (const subreddit of uniqueSubreddits) {
+      // if (allPosts.length >= MAX_POSTS_PER_TYPE) {
+      //   break;
+      // }
 
-    function finalPost(subreddit: string, remaining?: string[]): MediaItem|null {
-      const subredditPosts = filteredPosts[subreddit] || [];
-      const post = subredditPosts.filter(x=>x&&!finalPosts.includes(x.url))[0];
+      try {
+        const redditResponse = await getRedditPosts(subreddit);
+        if (redditResponse.error || !redditResponse.data || !Array.isArray(redditResponse.data)) {
+          console.error(`Error fetching posts from ${subreddit}:`, redditResponse.error);
+          continue;
+        }
 
-      if (!post) {
-        const remaining_ = remaining || [...subreddits, ...types[type].filter(x=>typeof x === "string"&&!subreddits.includes(x)).sort(()=>Math.random()-0.5) as string[]].filter(x=>x!=subreddit);
-        if (remaining_.length)
-          return finalPost(choose(...remaining_), remaining_);
-        else
-          return null;
-      } else {
-        finalPosts.push(post.url);
-        return post;
+        // Filter posts that are valid media and convert them
+        const validPosts = redditResponse.data.filter(
+          post => post.url && (!hasIDRG(post.url) || acceptsRedGifs) && (post.is_video || post.is_reddit_media_domain)
+        );
+
+        // Convert posts to media items
+        for (const redditPost of validPosts) {
+          // if (allPosts.length >= MAX_POSTS_PER_TYPE) {
+          //   break;
+          // }
+
+          // Skip if already exists
+          if (existingUrls.has(redditPost.url)) {
+            continue;
+          }
+
+          const mediaItem = await convertPostToMediaItem(redditPost, acceptsRedGifs, itemCounter++);
+          if (mediaItem && !existingUrls.has(mediaItem.url)) {
+            allPosts.push(mediaItem);
+            existingUrls.add(mediaItem.url); // Track to avoid duplicates within this batch
+          }
+        }
+      } catch (error) {
+        console.error(`Error processing subreddit ${subreddit}:`, error);
+        continue;
       }
     }
-    
-    const posts = subreddits.map(p=>finalPost(p)).filter(Boolean) as MediaItem[];
 
-    newMedia.push(...posts);
-    appendMediaItems(type, posts);
+    // Limit to MAX_POSTS_PER_TYPE and append to media.json
+    // const postsToAppend = allPosts.slice(0, MAX_POSTS_PER_TYPE);
+    // if (postsToAppend.length > 0) {
+    if (allPosts.length > 0) {
+      appendMediaItems(currentType, postsToAppend);
+    }
   }
 
-  return newMedia;
+  return [];
 }
 
 export async function getMediaItems(type: string, limit: number = ITEMS_PER_PAGE): Promise<MediaItem[]> {
-    const mediaList = getMedia(type);
-
-    if (mediaList.length >= limit)
-      return mediaList.slice(0, limit);
-    else {
-      await generateMediaItems(type);
-      return getMediaItems(type, limit);
-    }
+  await generateMediaItems(type);
+  const mediaList = getMedia(type);
+  return mediaList.slice(0, limit);
 }
 
-const gotMediaItems = {} as Record<string, MediaItem[]>;
+export async function mediaItems(type: string, limit: number = ITEMS_PER_PAGE, offset: number = 0): Promise<MediaItem[]> {
+  await generateMediaItems(type);
+  
+  // Get all media items for the type from media.json
+  const allMediaList = getMedia(type);
+  
+  // Reverse the list to show newest first
+  const reversedList = allMediaList.slice().reverse();
+  
+  // Return the requested slice
+  return reversedList.slice(offset, offset + limit);
+}
 
-export async function mediaItems(type: string, limit: number = ITEMS_PER_PAGE): Promise<MediaItem[]> {
-  const start = gotMediaItems[type]?.length || 0;
-  const mediaList = (await getMediaItems(type, start + limit)).slice().reverse();
-  gotMediaItems[type] = mediaList;
-  return mediaList.slice(start);
+// Clear cache for a specific type (useful when switching types)
+export function clearMediaCache(type?: string) {
+  // No-op since we're not using server-side cache anymore
+  // This function is kept for API compatibility
 }
 
 function randomize(...array: (string|number)[]) {

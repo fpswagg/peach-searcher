@@ -11,7 +11,7 @@ import { Image as ImageIcon, Video, Filter } from "lucide-react";
 export type FilterType = "all" | "image" | "video";
 
 export default function GalleryPage() {
-  const [allItems, setAllItems] = useState<MediaItem[]>([]);
+  const [allItems, setAllItems] = useState<MediaItem[]>([]); // Store ALL items (unfiltered)
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMoreItems, setHasMoreItems] = useState(true);
@@ -42,19 +42,45 @@ export default function GalleryPage() {
   }, []);
 
   // Fetch media items from API
-  const fetchMediaItems = useCallback(async (type: string, limit: number, append: boolean = false) => {
+  const fetchMediaItems = useCallback(async (type: string, limit: number, append: boolean = false, mediaFilter?: FilterType) => {
     try {
       if (!append) setIsLoading(true);
       else setIsLoadingMore(true);
 
-      const response = await fetch(`/api/media?type=${encodeURIComponent(type)}&limit=${limit}`);
+      // Calculate offset based on ALL items (not filtered) - this is the server's view
+      const offset = append ? allItems.length : 0;
+      
+      // If filtering, we need to fetch more items to account for filtering
+      // Estimate: if filtering, fetch 2x to ensure we get enough after filtering
+      const fetchLimit = (mediaFilter && mediaFilter !== "all") ? limit * 2 : limit;
+      
+      const response = await fetch(`/api/media?type=${encodeURIComponent(type)}&limit=${fetchLimit}&offset=${offset}`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
       const result = await response.json();
 
       if (result.success) {
-        const newItems = result.data;
-        // If we got fewer items than requested, we've reached the end
-        if (newItems.length < limit) {
+        let newItems = result.data || [];
+        
+        // Apply client-side filter if specified (for images/videos only)
+        if (mediaFilter && mediaFilter !== "all") {
+          newItems = newItems.filter((item: MediaItem) => item.type === mediaFilter);
+        }
+        
+        // Check if we've reached the end
+        // If we got fewer items than requested (after filtering), we might have reached the end
+        // But we need to check if the server returned fewer items than requested
+        const serverReturnedLess = (result.data?.length || 0) < fetchLimit;
+        if (serverReturnedLess && newItems.length < limit) {
           setHasMoreItems(false);
+        } else if (newItems.length >= limit) {
+          setHasMoreItems(true);
+        } else {
+          // We got some items but not enough - might have more, try to be optimistic
+          setHasMoreItems(!serverReturnedLess);
         }
         
         if (append) {
@@ -66,21 +92,26 @@ export default function GalleryPage() {
       } else {
         console.error("Error fetching media:", result.error);
         setHasMoreItems(false);
+        // Don't clear items on error, keep what we have
       }
     } catch (error) {
       console.error("Error fetching media:", error);
+      setHasMoreItems(false);
+      // On network error, don't clear existing items
     } finally {
       setIsLoading(false);
       setIsLoadingMore(false);
     }
-  }, []);
+  }, [allItems.length]);
 
-  // Initial load
+  // Initial load - reload when type or filter changes
   useEffect(() => {
-    fetchMediaItems(currentType, ITEMS_PER_PAGE, false);
-  }, [currentType, fetchMediaItems]);
+    setAllItems([]);
+    setHasMoreItems(true);
+    fetchMediaItems(currentType, ITEMS_PER_PAGE, false, filter);
+  }, [currentType, filter, fetchMediaItems]);
 
-  // Filter media items based on selected filter
+  // Filter media items based on selected filter (client-side for already loaded items)
   const filteredItems = useMemo(() => {
     if (filter === "all") return allItems;
     return allItems.filter((item) => item.type === filter);
@@ -89,9 +120,12 @@ export default function GalleryPage() {
   // Load more items when scrolling
   const loadMore = useCallback(() => {
     if (hasMoreItems && !isLoadingMore && !isLoading) {
-      fetchMediaItems(currentType, ITEMS_PER_PAGE, true);
+      // When loading more, we need to fetch more items and then filter
+      // Since we're filtering client-side, we fetch more to account for filtering
+      const fetchLimit = filter === "all" ? ITEMS_PER_PAGE : ITEMS_PER_PAGE * 2; // Fetch more if filtering
+      fetchMediaItems(currentType, fetchLimit, true, filter);
     }
-  }, [hasMoreItems, isLoadingMore, isLoading, currentType, fetchMediaItems]);
+  }, [hasMoreItems, isLoadingMore, isLoading, currentType, filter, fetchMediaItems]);
 
   // Intersection Observer for infinite scroll
   useEffect(() => {
@@ -138,8 +172,7 @@ export default function GalleryPage() {
                   key={type}
                   onClick={() => {
                     setCurrentType(type);
-                    setAllItems([]);
-                    setHasMoreItems(true);
+                    // Items will be cleared and reloaded in the useEffect
                   }}
                   className={`btn join-item ${currentType === type ? "btn-primary" : "btn-outline"}`}
                 >
