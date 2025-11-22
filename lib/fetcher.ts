@@ -336,15 +336,23 @@ export function extractURLRG(urls: RedgifUrlData) {
 }
 
 export function extractThumbnailRG(urls: RedgifUrlData) {
-    return (
-        urls.thumbnail ||
-        urls.poster ||
-        Object.values(urls).find((value) =>
-            ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'svg'].some((ext) =>
-                value.toLowerCase().endsWith('.' + ext)
-            )
+    // Prefer video thumbnail (vthumbnail) for videos, then regular thumbnail, then poster
+    // vthumbnail is usually a better quality preview for videos
+    if (urls.vthumbnail) {
+        return urls.vthumbnail;
+    }
+    if (urls.thumbnail) {
+        return urls.thumbnail;
+    }
+    if (urls.poster) {
+        return urls.poster;
+    }
+    // Fallback: find any image URL in the urls object
+    return Object.values(urls).find((value) =>
+        value && typeof value === 'string' && ['jpg', 'jpeg', 'png', 'bmp', 'tiff', 'svg', 'webp'].some((ext) =>
+            value.toLowerCase().endsWith('.' + ext)
         )
-    );
+    ) || null;
 }
 
 export const hasAudioCriteria: CriteriaFunction<RedgifGIF> = (x) =>

@@ -83,7 +83,12 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
                   sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
                   loading="lazy"
                   unoptimized
-                  onError={() => {
+                  onError={(e) => {
+                    console.warn('[Thumbnail] Failed to load thumbnail:', item.thumbnail, e);
+                    // For Redgif thumbnails, try using proxy if direct load fails
+                    if (item.thumbnail && (item.thumbnail.includes('redgifs.com') || item.thumbnail.includes('thumbs.redgifs.com'))) {
+                      console.log('[Thumbnail] Redgif thumbnail failed, this might be a CORS issue');
+                    }
                     setImageError(true);
                     setImageLoading(false);
                   }}

@@ -240,7 +240,17 @@ async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: bo
         return null;
       }
 
-      console.log(`[Redgif] Successfully processed Redgif ${redgifId}, URL: ${url}, Duration: ${duration}s`);
+      console.log(`[Redgif] Successfully processed Redgif ${redgifId}, URL: ${url}, Thumbnail: ${thumbnail || 'none'}, Duration: ${duration}s`);
+      
+      // Log available URLs for debugging
+      if (!thumbnail) {
+        console.warn(`[Redgif] No thumbnail found for Redgif ${redgifId}. Available URLs:`, {
+          thumbnail: gifData.urls.thumbnail,
+          vthumbnail: gifData.urls.vthumbnail,
+          poster: gifData.urls.poster,
+          gif: gifData.urls.gif,
+        });
+      }
 
       return {
         id: generateMediaId(url, itemCounter),
