@@ -29,10 +29,17 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
   };
 
   // Format duration in seconds to MM:SS or HH:MM:SS
-  const formatDuration = (seconds: number): string => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
+  // Handle both integer and float durations
+  const formatDuration = (seconds: number | undefined): string => {
+    if (!seconds || isNaN(seconds)) {
+      return '0:00';
+    }
+    
+    // Ensure we have a valid number (handle floats)
+    const totalSeconds = Math.floor(seconds);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
     
     if (hours > 0) {
       return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;

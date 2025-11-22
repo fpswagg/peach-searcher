@@ -33,12 +33,21 @@ export async function GET(request: NextRequest) {
       'i.redgifs.com',
       'preview.redd.it',
       'external-preview.redd.it',
+      'thumbs.redgifs.com',
+      'cdn.redgifs.com',
+      'v3.redgifs.com',
     ];
 
     const hostname = targetUrl.hostname.toLowerCase();
-    const isAllowed = allowedDomains.some(domain => 
-      hostname === domain || hostname.endsWith('.' + domain)
-    );
+    const isAllowed = allowedDomains.some(domain => {
+      // Exact match
+      if (hostname === domain) return true;
+      // Subdomain match (e.g., cdn.redgifs.com matches redgifs.com)
+      if (hostname.endsWith('.' + domain)) return true;
+      // For redgifs.com, also allow any subdomain
+      if (domain === 'redgifs.com' && hostname.includes('.redgifs.com')) return true;
+      return false;
+    });
 
     if (!isAllowed) {
       return NextResponse.json(

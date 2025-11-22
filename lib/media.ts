@@ -230,21 +230,24 @@ async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: bo
 
       const url = extractURLRG(gifData.urls);
       const thumbnail = extractThumbnailRG(gifData.urls);
-      const duration = gifData.duration;
+      // Duration is a float from Redgifs API, ensure it's a valid number
+      const duration = typeof gifData.duration === 'number' && !isNaN(gifData.duration) 
+        ? Math.round(gifData.duration) 
+        : undefined;
 
       if (!url) {
         console.warn(`[Redgif] No video URL found for Redgif ID: ${redgifId}`);
         return null;
       }
 
-      console.log(`[Redgif] Successfully processed Redgif ${redgifId}, URL: ${url}`);
+      console.log(`[Redgif] Successfully processed Redgif ${redgifId}, URL: ${url}, Duration: ${duration}s`);
 
       return {
         id: generateMediaId(url, itemCounter),
         type: "video",
         url,
         thumbnail: thumbnail || undefined,
-        duration: duration || undefined,
+        duration: duration,
         name: redditPost.title,
         description: redditPost.selftext || undefined,
         created_utc: redditPost.created_utc,

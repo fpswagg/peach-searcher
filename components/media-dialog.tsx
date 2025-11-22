@@ -23,6 +23,7 @@ export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
   const [videoError, setVideoError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
   const [videoLoading, setVideoLoading] = useState(true);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
 
   // Reset error and loading states when item changes
   useEffect(() => {
@@ -31,6 +32,15 @@ export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
       setVideoError(false);
       setImageLoading(true);
       setVideoLoading(true);
+      
+      // For videos, check if we need to use proxy (for Redgifs or CORS issues)
+      if (item.type === "video") {
+        const isRedgifUrl = item.url.includes('redgifs.com') || item.url.includes('thumbs.redgifs.com') || item.url.includes('cdn.redgifs.com');
+        // Try direct URL first, will fallback to proxy if needed
+        setVideoUrl(item.url);
+      } else {
+        setVideoUrl(null);
+      }
     }
   }, [item]);
 
@@ -150,22 +160,45 @@ export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
                       <span className="loading loading-spinner loading-lg text-primary"></span>
                     </div>
                   )}
-                  <video
-                    src={item.url}
-                    controls
-                    className="max-w-full max-h-full w-auto h-auto object-contain rounded-lg relative z-10"
-                    autoPlay
-                    playsInline
-                    onError={() => {
-                      setVideoError(true);
-                      setVideoLoading(false);
-                    }}
-                    onLoadedData={() => setVideoLoading(false)}
-                    onCanPlay={() => setVideoLoading(false)}
-                    style={{ maxHeight: '70vh', maxWidth: '100%' }}
-                  >
-                    Your browser does not support the video tag.
-                  </video>
+                  {videoUrl && (
+                    <video
+                      key={videoUrl} // Force re-render when URL changes
+                      src={videoUrl}
+                      controls
+                      className="max-w-full max-h-full w-auto h-auto object-contain rounded-lg relative z-10"
+                      autoPlay
+                      playsInline
+                      preload="metadata"
+                      onError={(e) => {
+                        console.error('[Video] Error loading video:', videoUrl, e);
+                        // Try using proxy if direct load fails
+                        if (videoUrl === item.url && !videoUrl.includes('/api/proxy')) {
+                          console.log('[Video] Attempting to load via proxy...');
+                          setVideoUrl(`/api/proxy?url=${encodeURIComponent(item.url)}`);
+                        } else {
+                          setVideoError(true);
+                          setVideoLoading(false);
+                        }
+                      }}
+                      onLoadedData={() => {
+                        console.log('[Video] Video data loaded:', videoUrl);
+                        setVideoLoading(false);
+                      }}
+                      onCanPlay={() => {
+                        console.log('[Video] Video can play:', videoUrl);
+                        setVideoLoading(false);
+                      }}
+                      onLoadStart={() => {
+                        console.log('[Video] Video load started:', videoUrl);
+                      }}
+                      onStalled={() => {
+                        console.warn('[Video] Video stalled:', videoUrl);
+                      }}
+                      style={{ maxHeight: '70vh', maxWidth: '100%' }}
+                    >
+                      Your browser does not support the video tag.
+                    </video>
+                  )}
                 </>
               ) : (
                 <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center p-8 bg-base-300 rounded-lg">
