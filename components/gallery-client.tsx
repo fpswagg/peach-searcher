@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { MediaItem } from "@/types/media";
 import { MediaCard } from "@/components/media-card";
 import { MediaDialog } from "@/components/media-dialog";
@@ -14,10 +15,14 @@ export type FilterType = "all" | "image" | "video";
 interface GalleryClientProps {
   initialItems: MediaItem[];
   initialType: string;
+  initialFilter: FilterType;
   types: string[];
 }
 
-export function GalleryClient({ initialItems, initialType, types }: GalleryClientProps) {
+export function GalleryClient({ initialItems, initialType, initialFilter, types }: GalleryClientProps) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  
   // Try to load from cache first, fallback to initialItems
   const cachedItems = typeof window !== "undefined" ? getCachedMedia(initialType) : null;
   const initialData = cachedItems || initialItems;
@@ -28,9 +33,29 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
   const [hasMoreItems, setHasMoreItems] = useState(true);
   const [selectedItem, setSelectedItem] = useState<MediaItem | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [filter, setFilter] = useState<FilterType>("all");
+  const [filter, setFilter] = useState<FilterType>(initialFilter);
   const [currentType, setCurrentType] = useState<string>(initialType);
   const observerTarget = useRef<HTMLDivElement>(null);
+
+  // Update URL query params when type or filter changes
+  const updateQueryParams = useCallback((type: string, filter: FilterType) => {
+    const params = new URLSearchParams(searchParams.toString());
+    
+    if (type && type !== "All") {
+      params.set("type", type);
+    } else {
+      params.delete("type");
+    }
+    
+    if (filter && filter !== "all") {
+      params.set("filter", filter);
+    } else {
+      params.delete("filter");
+    }
+    
+    const newUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
+    router.push(newUrl, { scroll: false });
+  }, [router, searchParams]);
 
   // Save initial items to cache if we have them and no cache exists
   useEffect(() => {
@@ -38,6 +63,23 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
       saveCachedMedia(initialType, initialItems);
     }
   }, [initialType, initialItems, cachedItems]);
+
+  // Sync with URL query params changes (browser back/forward)
+  // This handles browser navigation (back/forward buttons)
+  useEffect(() => {
+    const urlType = searchParams.get("type") || "All";
+    const urlFilter = (searchParams.get("filter") === "image" || searchParams.get("filter") === "video")
+      ? searchParams.get("filter") as FilterType
+      : "all";
+    
+    // Only update if different from current state to avoid unnecessary re-renders
+    // This will trigger the existing useEffect that watches currentType/filter to reload data
+    if (urlType !== currentType || urlFilter !== filter) {
+      setCurrentType(urlType);
+      setFilter(urlFilter);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // Fetch media items from API
   const fetchMediaItems = useCallback(async (type: string, limit: number, append: boolean = false, mediaFilter?: FilterType) => {
@@ -314,7 +356,11 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
             </label>
             <select
               value={currentType}
-              onChange={(e) => setCurrentType(e.target.value)}
+              onChange={(e) => {
+                const newType = e.target.value;
+                setCurrentType(newType);
+                updateQueryParams(newType, filter);
+              }}
               className="select select-bordered w-full min-w-[180px] focus:select-primary"
             >
               {types.map((type) => (
@@ -332,21 +378,30 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
             </label>
             <div className="join">
               <button
-                onClick={() => setFilter("all")}
+                onClick={() => {
+                  setFilter("all");
+                  updateQueryParams(currentType, "all");
+                }}
                 className={`btn join-item ${filter === "all" ? "btn-primary" : "btn-outline"}`}
               >
                 <Filter className="w-4 h-4 mr-2" />
                 All
               </button>
               <button
-                onClick={() => setFilter("image")}
+                onClick={() => {
+                  setFilter("image");
+                  updateQueryParams(currentType, "image");
+                }}
                 className={`btn join-item ${filter === "image" ? "btn-primary" : "btn-outline"}`}
               >
                 <ImageIcon className="w-4 h-4 mr-2" />
                 Images
               </button>
               <button
-                onClick={() => setFilter("video")}
+                onClick={() => {
+                  setFilter("video");
+                  updateQueryParams(currentType, "video");
+                }}
                 className={`btn join-item ${filter === "video" ? "btn-primary" : "btn-outline"}`}
               >
                 <Video className="w-4 h-4 mr-2" />

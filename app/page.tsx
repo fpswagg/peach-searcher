@@ -3,8 +3,19 @@ import { GalleryClient } from "@/components/gallery-client";
 
 export const dynamic = 'force-dynamic';
 
-export default async function GalleryPage() {
-  const initialType = "All";
+interface PageProps {
+  searchParams: {
+    type?: string;
+    filter?: string;
+  };
+}
+
+export default async function GalleryPage({ searchParams }: PageProps) {
+  // Get type and filter from query params, with defaults
+  const initialType = searchParams.type || "All";
+  const initialFilter = (searchParams.filter === "image" || searchParams.filter === "video") 
+    ? searchParams.filter 
+    : "all";
   
   // Fetch initial data on the server
   const [initialItems, types] = await Promise.all([
@@ -16,6 +27,7 @@ export default async function GalleryPage() {
     <GalleryClient
       initialItems={initialItems}
       initialType={initialType}
+      initialFilter={initialFilter}
       types={types}
     />
   );
