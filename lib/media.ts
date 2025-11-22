@@ -292,7 +292,7 @@ export async function generateMediaItems(type?: string): Promise<MediaItem[]> {
     // const postsToAppend = allPosts.slice(0, MAX_POSTS_PER_TYPE);
     // if (postsToAppend.length > 0) {
     if (allPosts.length > 0) {
-      appendMediaItems(currentType, postsToAppend);
+      appendMediaItems(currentType, allPosts);
     }
   }
 
