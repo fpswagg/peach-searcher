@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { MediaItem } from "@/types/media";
 import {
   Dialog,
@@ -9,21 +9,29 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Download, AlertCircle, Image as ImageIcon, Video } from "lucide-react";
+import { Download, AlertCircle, Image as ImageIcon, Video, ChevronLeft, ChevronRight } from "lucide-react";
 import Image from "next/image";
 
 interface MediaDialogProps {
   item: MediaItem | null;
+  items: MediaItem[];
+  currentIndex: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onItemChange: (item: MediaItem, index: number) => void;
 }
 
-export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
+export function MediaDialog({ item, items, currentIndex, open, onOpenChange, onItemChange }: MediaDialogProps) {
   const [imageError, setImageError] = useState(false);
   const [videoError, setVideoError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
   const [videoLoading, setVideoLoading] = useState(true);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  
+  // Swipe gesture state
+  const touchStartX = useRef<number | null>(null);
+  const touchEndX = useRef<number | null>(null);
+  const minSwipeDistance = 50;
 
   // Reset error and loading states when item changes
   useEffect(() => {
@@ -43,6 +51,69 @@ export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
       }
     }
   }, [item]);
+
+  // Keyboard navigation
+  useEffect(() => {
+    if (!open) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        handlePrevious();
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        handleNext();
+      } else if (e.key === 'Escape') {
+        onOpenChange(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [open, currentIndex, items]);
+
+  const handleNext = () => {
+    if (currentIndex < items.length - 1) {
+      const nextItem = items[currentIndex + 1];
+      onItemChange(nextItem, currentIndex + 1);
+    }
+  };
+
+  const handlePrevious = () => {
+    if (currentIndex > 0) {
+      const prevItem = items[currentIndex - 1];
+      onItemChange(prevItem, currentIndex - 1);
+    }
+  };
+
+  // Touch handlers for swipe gestures
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.targetTouches[0].clientX;
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    touchEndX.current = e.targetTouches[0].clientX;
+  };
+
+  const handleTouchEnd = () => {
+    if (!touchStartX.current || !touchEndX.current) return;
+    
+    const distance = touchStartX.current - touchEndX.current;
+    const isLeftSwipe = distance > minSwipeDistance;
+    const isRightSwipe = distance < -minSwipeDistance;
+
+    if (isLeftSwipe) {
+      handleNext();
+    } else if (isRightSwipe) {
+      handlePrevious();
+    }
+
+    touchStartX.current = null;
+    touchEndX.current = null;
+  };
+
+  const canGoNext = currentIndex < items.length - 1;
+  const canGoPrevious = currentIndex > 0;
 
   if (!item) return null;
 
@@ -150,7 +221,39 @@ export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
         </DialogHeader>
 
         {/* Media Preview Section */}
-        <div className="flex-1 overflow-hidden flex items-center justify-center bg-base-200 p-4 sm:p-6 min-h-0 relative" style={{ minHeight: '300px', maxHeight: '70vh' }}>
+        <div 
+          className="flex-1 overflow-hidden flex items-center justify-center bg-base-200 p-4 sm:p-6 min-h-0 relative" 
+          style={{ minHeight: '300px', maxHeight: '70vh' }}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
+          {/* Navigation Arrows */}
+          {canGoPrevious && (
+            <button
+              onClick={handlePrevious}
+              className="absolute left-2 sm:left-4 z-30 btn btn-circle btn-sm sm:btn-md bg-base-100/80 hover:bg-base-100 border border-base-300 shadow-lg"
+              aria-label="Previous item"
+            >
+              <ChevronLeft className="w-5 h-5 sm:w-6 sm:h-6" />
+            </button>
+          )}
+          {canGoNext && (
+            <button
+              onClick={handleNext}
+              className="absolute right-2 sm:right-4 z-30 btn btn-circle btn-sm sm:btn-md bg-base-100/80 hover:bg-base-100 border border-base-300 shadow-lg"
+              aria-label="Next item"
+            >
+              <ChevronRight className="w-5 h-5 sm:w-6 sm:h-6" />
+            </button>
+          )}
+          
+          {/* Item Counter */}
+          {items.length > 1 && (
+            <div className="absolute top-2 left-1/2 transform -translate-x-1/2 z-30 bg-base-100/80 backdrop-blur-sm rounded-full px-3 py-1 text-xs sm:text-sm border border-base-300 shadow-lg">
+              {currentIndex + 1} / {items.length}
+            </div>
+          )}
           {item.type === "video" ? (
             <div className="relative w-full h-full max-w-full max-h-full flex items-center justify-center" style={{ minHeight: '300px' }}>
               {!videoError ? (

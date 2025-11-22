@@ -262,11 +262,18 @@ export function GalleryClient({ initialItems, initialType, initialFilter, types 
       </div>
 
       {/* Media Dialog */}
-      <MediaDialog
-        item={selectedItem}
-        open={isDialogOpen}
-        onOpenChange={setIsDialogOpen}
-      />
+      {selectedItem && (
+        <MediaDialog
+          item={selectedItem}
+          items={filteredItems}
+          currentIndex={Math.max(0, filteredItems.findIndex(item => item.id === selectedItem.id))}
+          open={isDialogOpen}
+          onOpenChange={setIsDialogOpen}
+          onItemChange={(item, index) => {
+            setSelectedItem(item);
+          }}
+        />
+      )}
     </div>
   );
 }
