@@ -20,7 +20,9 @@ interface GalleryClientProps {
 export function GalleryClient({ initialItems, initialType, types }: GalleryClientProps) {
   // Try to load from cache first, fallback to initialItems
   const cachedItems = typeof window !== "undefined" ? getCachedMedia(initialType) : null;
-  const [allItems, setAllItems] = useState<MediaItem[]>(cachedItems || initialItems); // Store ALL items (unfiltered)
+  const initialData = cachedItems || initialItems;
+  const [allItems, setAllItems] = useState<MediaItem[]>(initialData); // Store ALL items (unfiltered)
+  const [unfilteredCount, setUnfilteredCount] = useState<number>(initialData.length); // Track unfiltered items count for offset calculation
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMoreItems, setHasMoreItems] = useState(true);
@@ -56,6 +58,7 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
           // Show first page of cached items immediately
           const cachedPage = filteredCached.slice(0, limit);
           setAllItems(cachedPage);
+          setUnfilteredCount(cached.length); // Track unfiltered count from cache
           setHasMoreItems(filteredCached.length > limit || cached.length > limit);
           setIsLoading(false);
           
@@ -104,6 +107,7 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
           if (remainingFiltered.length > 0) {
             const itemsToAdd = remainingFiltered.slice(0, limit);
             setAllItems((prev) => [...prev, ...itemsToAdd]);
+            // Unfiltered count stays the same when using cache
             setHasMoreItems(remainingFiltered.length > limit || cached.length > allCachedFiltered.length);
             setIsLoadingMore(false);
             
@@ -123,8 +127,8 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
         }
       }
 
-      // Calculate offset based on ALL items (not filtered) - this is the server's view
-      const offset = append ? allItems.length : 0;
+      // Calculate offset based on unfiltered items count (server doesn't know about client-side filtering)
+      const offset = append ? unfilteredCount : 0;
       
       // If filtering, we need to fetch more items to account for filtering
       // Estimate: if filtering, fetch 2x to ensure we get enough after filtering
@@ -170,8 +174,12 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
         
         if (append) {
           setAllItems((prev) => [...prev, ...newItems]);
+          // Update unfiltered count - add the unfiltered items we received
+          setUnfilteredCount((prev) => prev + (result.data?.length || 0));
         } else {
           setAllItems(newItems);
+          // Reset unfiltered count to the unfiltered items we received
+          setUnfilteredCount(result.data?.length || 0);
           setHasMoreItems(true); // Reset when loading new type
         }
       } else {
@@ -197,7 +205,7 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
       setIsLoading(false);
       setIsLoadingMore(false);
     }
-  }, [allItems.length]);
+  }, [allItems.length, unfilteredCount]);
 
   // Reload when type or filter changes (but not on initial mount)
   const isInitialMount = useRef(true);
@@ -230,6 +238,7 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
         }
         // Show first page from cache
         setAllItems(filteredCached.slice(0, ITEMS_PER_PAGE));
+        setUnfilteredCount(cached.length); // Track unfiltered count from cache
         setHasMoreItems(filteredCached.length > ITEMS_PER_PAGE || cached.length > ITEMS_PER_PAGE);
         // Still fetch in background to update cache
         fetchMediaItems(type, ITEMS_PER_PAGE, false, mediaFilter);
@@ -238,6 +247,7 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
     }
     
     setAllItems([]);
+    setUnfilteredCount(0); // Reset unfiltered count
     setHasMoreItems(true);
     fetchMediaItems(type, ITEMS_PER_PAGE, false, mediaFilter);
     // eslint-disable-next-line react-hooks/exhaustive-deps

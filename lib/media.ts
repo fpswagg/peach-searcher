@@ -282,7 +282,12 @@ export async function generateMediaItems(type: string): Promise<MediaItem[]> {
   }
 
   // Sort by created_utc timestamp (newest first - highest timestamp first)
-  allPosts.sort((a, b) => (b.created_utc || 0) - (a.created_utc || 0));
+  // Reddit returns newest first, but we're mixing multiple subreddits, so we need to sort
+  allPosts.sort((a, b) => {
+    const aTime = a.created_utc || 0;
+    const bTime = b.created_utc || 0;
+    return bTime - aTime; // Higher timestamp (newer) comes first
+  });
   
   // Return generated items (newest first)
   return allPosts;
