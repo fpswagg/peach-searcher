@@ -15,13 +15,31 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
   const [imageError, setImageError] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
 
   // Reset error and loading states when item changes
   useEffect(() => {
     setImageError(false);
     setImageLoaded(false);
     setImageLoading(true);
-  }, [item.id, item.url, item.thumbnail]);
+    
+    // For video thumbnails, check if it's a Redgif thumbnail and use proxy
+    if (item.type === "video" && item.thumbnail) {
+      const isRedgifThumbnail = item.thumbnail.includes('redgifs.com') || 
+                                item.thumbnail.includes('thumbs.redgifs.com') ||
+                                item.thumbnail.includes('cdn.redgifs.com');
+      // Use proxy for Redgif thumbnails to avoid CORS issues
+      if (isRedgifThumbnail) {
+        setThumbnailUrl(`/api/proxy?url=${encodeURIComponent(item.thumbnail)}`);
+      } else {
+        setThumbnailUrl(item.thumbnail);
+      }
+    } else if (item.thumbnail) {
+      setThumbnailUrl(item.thumbnail);
+    } else {
+      setThumbnailUrl(null);
+    }
+  }, [item.id, item.url, item.thumbnail, item.type]);
 
   const handleImageLoad = () => {
     setImageLoaded(true);
@@ -68,7 +86,7 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
       <div className="relative w-full h-full overflow-hidden bg-base-300">
         {item.type === "video" ? (
           <>
-            {item.thumbnail && !imageError ? (
+            {thumbnailUrl && !imageError ? (
               <div className="relative w-full h-full bg-base-300">
                 {imageLoading && (
                   <div className="absolute inset-0 flex items-center justify-center bg-base-300 z-10">
@@ -76,7 +94,8 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
                   </div>
                 )}
                 <Image
-                  src={item.thumbnail}
+                  key={thumbnailUrl} // Force re-render when URL changes
+                  src={thumbnailUrl}
                   alt={item.name}
                   fill
                   className={`object-contain transition-all duration-300 group-hover:scale-105 ${imageLoading ? 'opacity-0' : 'opacity-100'}`}
@@ -84,13 +103,15 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
                   loading="lazy"
                   unoptimized
                   onError={(e) => {
-                    console.warn('[Thumbnail] Failed to load thumbnail:', item.thumbnail, e);
-                    // For Redgif thumbnails, try using proxy if direct load fails
-                    if (item.thumbnail && (item.thumbnail.includes('redgifs.com') || item.thumbnail.includes('thumbs.redgifs.com'))) {
-                      console.log('[Thumbnail] Redgif thumbnail failed, this might be a CORS issue');
+                    console.warn('[Thumbnail] Failed to load thumbnail:', thumbnailUrl, e);
+                    // If proxy failed and we have original thumbnail, try direct (shouldn't happen but fallback)
+                    if (thumbnailUrl?.includes('/api/proxy') && item.thumbnail && !item.thumbnail.includes('/api/proxy')) {
+                      console.log('[Thumbnail] Proxy failed, trying direct URL as fallback');
+                      setThumbnailUrl(item.thumbnail);
+                    } else {
+                      setImageError(true);
+                      setImageLoading(false);
                     }
-                    setImageError(true);
-                    setImageLoading(false);
                   }}
                   onLoad={handleImageLoad}
                 />
