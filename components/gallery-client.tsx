@@ -1,7 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { MediaItem } from "@/types/media";
 import { MediaCard } from "@/components/media-card";
 import { MediaDialog } from "@/components/media-dialog";
@@ -20,42 +19,35 @@ interface GalleryClientProps {
 }
 
 export function GalleryClient({ initialItems, initialType, initialFilter, types }: GalleryClientProps) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  
   // Try to load from cache first, fallback to initialItems
   const cachedItems = typeof window !== "undefined" ? getCachedMedia(initialType) : null;
   const initialData = cachedItems || initialItems;
-  const [allItems, setAllItems] = useState<MediaItem[]>(initialData); // Store ALL items (unfiltered)
-  const [unfilteredCount, setUnfilteredCount] = useState<number>(initialData.length); // Track unfiltered items count for offset calculation
+  const [allItems, setAllItems] = useState<MediaItem[]>(initialData); // Store items (already filtered server-side)
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMoreItems, setHasMoreItems] = useState(true);
   const [selectedItem, setSelectedItem] = useState<MediaItem | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [filter, setFilter] = useState<FilterType>(initialFilter);
-  const [currentType, setCurrentType] = useState<string>(initialType);
+  const [filter] = useState<FilterType>(initialFilter); // Read-only, changes cause page reload
+  const [currentType] = useState<string>(initialType); // Read-only, changes cause page reload
   const observerTarget = useRef<HTMLDivElement>(null);
 
-  // Update URL query params when type or filter changes
+  // Update URL query params and reload page when type or filter changes
   const updateQueryParams = useCallback((type: string, filter: FilterType) => {
-    const params = new URLSearchParams(searchParams.toString());
+    const params = new URLSearchParams();
     
     if (type && type !== "All") {
       params.set("type", type);
-    } else {
-      params.delete("type");
     }
     
     if (filter && filter !== "all") {
       params.set("filter", filter);
-    } else {
-      params.delete("filter");
     }
     
+    // Reload page with new query params
     const newUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
-    router.push(newUrl, { scroll: false });
-  }, [router, searchParams]);
+    window.location.href = newUrl;
+  }, []);
 
   // Save initial items to cache if we have them and no cache exists
   useEffect(() => {
@@ -64,119 +56,21 @@ export function GalleryClient({ initialItems, initialType, initialFilter, types 
     }
   }, [initialType, initialItems, cachedItems]);
 
-  // Sync with URL query params changes (browser back/forward)
-  // This handles browser navigation (back/forward buttons)
-  useEffect(() => {
-    const urlType = searchParams.get("type") || "All";
-    const urlFilter = (searchParams.get("filter") === "image" || searchParams.get("filter") === "video")
-      ? searchParams.get("filter") as FilterType
-      : "all";
-    
-    // Only update if different from current state to avoid unnecessary re-renders
-    // This will trigger the existing useEffect that watches currentType/filter to reload data
-    if (urlType !== currentType || urlFilter !== filter) {
-      setCurrentType(urlType);
-      setFilter(urlFilter);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  // No need to sync with URL - page will reload on changes
 
-  // Fetch media items from API
-  const fetchMediaItems = useCallback(async (type: string, limit: number, append: boolean = false, mediaFilter?: FilterType) => {
+  // Fetch media items from API (server-side filtering is applied)
+  const fetchMediaItems = useCallback(async (type: string, limit: number, append: boolean = false) => {
     try {
       if (!append) setIsLoading(true);
       else setIsLoadingMore(true);
 
-      // Check cache first if not appending
-      if (!append && typeof window !== "undefined") {
-        const cached = getCachedMedia(type);
-        if (cached && cached.length > 0) {
-          // Apply filter to cached items
-          let filteredCached = cached;
-          if (mediaFilter && mediaFilter !== "all") {
-            filteredCached = cached.filter((item: MediaItem) => item.type === mediaFilter);
-          }
-          
-          // Show first page of cached items immediately
-          const cachedPage = filteredCached.slice(0, limit);
-          setAllItems(cachedPage);
-          setUnfilteredCount(cached.length); // Track unfiltered count from cache
-          setHasMoreItems(filteredCached.length > limit || cached.length > limit);
-          setIsLoading(false);
-          
-          // Fetch fresh data in background to update cache
-          fetch(`/api/media?type=${encodeURIComponent(type)}&limit=${limit}&offset=0`)
-            .then(res => res.json())
-            .then(result => {
-              if (result.success && result.data) {
-                saveCachedMedia(type, result.data);
-                // Update items if we're still on first page (type check happens via closure)
-                setAllItems((prevItems) => {
-                  // Only update if we haven't changed type and still on first page
-                  if (prevItems.length <= limit) {
-                    let filtered = result.data;
-                    if (mediaFilter && mediaFilter !== "all") {
-                      filtered = result.data.filter((item: MediaItem) => item.type === mediaFilter);
-                    }
-                    return filtered.slice(0, limit);
-                  }
-                  return prevItems;
-                });
-                setHasMoreItems(result.data.length >= limit);
-              }
-            })
-            .catch(err => console.error("Background fetch error:", err));
-          
-          return;
-        }
-      }
-
-      // For pagination, check cache first if appending
-      if (append && typeof window !== "undefined") {
-        const cached = getCachedMedia(type);
-        if (cached && cached.length > 0) {
-          // We need to find how many unfiltered items we've already displayed
-          // Since allItems might be filtered, we need to track this differently
-          // For now, we'll use a simpler approach: continue through cache and filter
-          const allCachedFiltered = mediaFilter && mediaFilter !== "all" 
-            ? cached.filter((item: MediaItem) => item.type === mediaFilter)
-            : cached;
-          
-          // Calculate how many filtered items we've shown
-          const filteredItemsShown = allItems.length;
-          const remainingFiltered = allCachedFiltered.slice(filteredItemsShown);
-          
-          if (remainingFiltered.length > 0) {
-            const itemsToAdd = remainingFiltered.slice(0, limit);
-            setAllItems((prev) => [...prev, ...itemsToAdd]);
-            // Unfiltered count stays the same when using cache
-            setHasMoreItems(remainingFiltered.length > limit || cached.length > allCachedFiltered.length);
-            setIsLoadingMore(false);
-            
-            // Still fetch in background to update cache (use cache length as server offset)
-            const serverOffset = cached.length;
-            fetch(`/api/media?type=${encodeURIComponent(type)}&limit=${limit}&offset=${serverOffset}`)
-              .then(res => res.json())
-              .then(result => {
-                if (result.success && result.data && result.data.length > 0) {
-                  appendCachedMedia(type, result.data);
-                }
-              })
-              .catch(err => console.error("Background fetch error:", err));
-            
-            return;
-          }
-        }
-      }
-
-      // Calculate offset based on unfiltered items count (server doesn't know about client-side filtering)
-      const offset = append ? unfilteredCount : 0;
+      // Calculate offset based on current items count
+      const offset = append ? allItems.length : 0;
       
-      // If filtering, we need to fetch more items to account for filtering
-      // Estimate: if filtering, fetch 2x to ensure we get enough after filtering
-      const fetchLimit = (mediaFilter && mediaFilter !== "all") ? limit * 2 : limit;
+      // Build API URL with current filter
+      const apiUrl = `/api/media?type=${encodeURIComponent(type)}&limit=${limit}&offset=${offset}${filter !== "all" ? `&filter=${filter}` : ""}`;
       
-      const response = await fetch(`/api/media?type=${encodeURIComponent(type)}&limit=${fetchLimit}&offset=${offset}`);
+      const response = await fetch(apiUrl);
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -185,10 +79,11 @@ export function GalleryClient({ initialItems, initialType, initialFilter, types 
       const result = await response.json();
 
       if (result.success) {
-        let newItems = result.data || [];
+        const newItems = result.data || [];
         
-        // Save to cache (save all items from server, not filtered)
+        // Save to cache (save unfiltered items if available)
         if (typeof window !== "undefined") {
+          // Note: We're saving filtered items, but for pagination we track filtered count
           if (append) {
             appendCachedMedia(type, result.data);
           } else {
@@ -196,120 +91,40 @@ export function GalleryClient({ initialItems, initialType, initialFilter, types 
           }
         }
         
-        // Apply client-side filter if specified (for images/videos only)
-        if (mediaFilter && mediaFilter !== "all") {
-          newItems = newItems.filter((item: MediaItem) => item.type === mediaFilter);
-        }
-        
         // Check if we've reached the end
-        // If we got fewer items than requested (after filtering), we might have reached the end
-        // But we need to check if the server returned fewer items than requested
-        const serverReturnedLess = (result.data?.length || 0) < fetchLimit;
-        if (serverReturnedLess && newItems.length < limit) {
-          setHasMoreItems(false);
-        } else if (newItems.length >= limit) {
-          setHasMoreItems(true);
-        } else {
-          // We got some items but not enough - might have more, try to be optimistic
-          setHasMoreItems(!serverReturnedLess);
-        }
+        // Use hasMore from server if available, otherwise check item count
+        const hasMore = result.hasMore !== undefined ? result.hasMore : newItems.length >= limit;
+        setHasMoreItems(hasMore);
         
         if (append) {
           setAllItems((prev) => [...prev, ...newItems]);
-          // Update unfiltered count - add the unfiltered items we received
-          setUnfilteredCount((prev) => prev + (result.data?.length || 0));
         } else {
           setAllItems(newItems);
-          // Reset unfiltered count to the unfiltered items we received
-          setUnfilteredCount(result.data?.length || 0);
-          setHasMoreItems(true); // Reset when loading new type
+          setHasMoreItems(hasMore);
         }
       } else {
         console.error("Error fetching media:", result.error);
         setHasMoreItems(false);
-        // Don't clear items on error, keep what we have
       }
     } catch (error) {
       console.error("Error fetching media:", error);
       setHasMoreItems(false);
-      // On network error, try to use cache if available
-      if (!append && typeof window !== "undefined") {
-        const cached = getCachedMedia(type);
-        if (cached && cached.length > 0) {
-          let filteredCached = cached;
-          if (mediaFilter && mediaFilter !== "all") {
-            filteredCached = cached.filter((item: MediaItem) => item.type === mediaFilter);
-          }
-          setAllItems(filteredCached);
-        }
-      }
     } finally {
       setIsLoading(false);
       setIsLoadingMore(false);
     }
-  }, [allItems.length, unfilteredCount]);
+  }, [allItems.length, filter]);
 
-  // Reload when type or filter changes (but not on initial mount)
-  const isInitialMount = useRef(true);
-  const currentTypeRef = useRef(currentType);
-  const filterRef = useRef(filter);
-  
-  // Keep refs in sync
-  useEffect(() => {
-    currentTypeRef.current = currentType;
-    filterRef.current = filter;
-  }, [currentType, filter]);
-  
-  useEffect(() => {
-    // Skip initial mount - we already have initialItems or cached items
-    if (isInitialMount.current) {
-      isInitialMount.current = false;
-      return;
-    }
-    
-    const type = currentTypeRef.current;
-    const mediaFilter = filterRef.current;
-    
-    // Check cache first when switching types
-    if (typeof window !== "undefined") {
-      const cached = getCachedMedia(type);
-      if (cached && cached.length > 0) {
-        let filteredCached = cached;
-        if (mediaFilter !== "all") {
-          filteredCached = cached.filter((item: MediaItem) => item.type === mediaFilter);
-        }
-        // Show first page from cache
-        setAllItems(filteredCached.slice(0, ITEMS_PER_PAGE));
-        setUnfilteredCount(cached.length); // Track unfiltered count from cache
-        setHasMoreItems(filteredCached.length > ITEMS_PER_PAGE || cached.length > ITEMS_PER_PAGE);
-        // Still fetch in background to update cache
-        fetchMediaItems(type, ITEMS_PER_PAGE, false, mediaFilter);
-        return;
-      }
-    }
-    
-    setAllItems([]);
-    setUnfilteredCount(0); // Reset unfiltered count
-    setHasMoreItems(true);
-    fetchMediaItems(type, ITEMS_PER_PAGE, false, mediaFilter);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentType, filter]);
-
-  // Filter media items based on selected filter (client-side for already loaded items)
-  const filteredItems = useMemo(() => {
-    if (filter === "all") return allItems;
-    return allItems.filter((item) => item.type === filter);
-  }, [allItems, filter]);
+  // No need to handle type/filter changes - page reloads on change
+  // Items are already filtered server-side, so use them directly
+  const filteredItems = allItems;
 
   // Load more items when scrolling
   const loadMore = useCallback(() => {
     if (hasMoreItems && !isLoadingMore && !isLoading) {
-      // When loading more, we need to fetch more items and then filter
-      // Since we're filtering client-side, we fetch more to account for filtering
-      const fetchLimit = filter === "all" ? ITEMS_PER_PAGE : ITEMS_PER_PAGE * 2; // Fetch more if filtering
-      fetchMediaItems(currentType, fetchLimit, true, filter);
+      fetchMediaItems(currentType, ITEMS_PER_PAGE, true);
     }
-  }, [hasMoreItems, isLoadingMore, isLoading, currentType, filter, fetchMediaItems]);
+  }, [hasMoreItems, isLoadingMore, isLoading, currentType, fetchMediaItems]);
 
   // Intersection Observer for infinite scroll
   useEffect(() => {
@@ -358,7 +173,6 @@ export function GalleryClient({ initialItems, initialType, initialFilter, types 
               value={currentType}
               onChange={(e) => {
                 const newType = e.target.value;
-                setCurrentType(newType);
                 updateQueryParams(newType, filter);
               }}
               className="select select-bordered w-full min-w-[180px] focus:select-primary"
@@ -378,30 +192,21 @@ export function GalleryClient({ initialItems, initialType, initialFilter, types 
             </label>
             <div className="join">
               <button
-                onClick={() => {
-                  setFilter("all");
-                  updateQueryParams(currentType, "all");
-                }}
+                onClick={() => updateQueryParams(currentType, "all")}
                 className={`btn join-item ${filter === "all" ? "btn-primary" : "btn-outline"}`}
               >
                 <Filter className="w-4 h-4 mr-2" />
                 All
               </button>
               <button
-                onClick={() => {
-                  setFilter("image");
-                  updateQueryParams(currentType, "image");
-                }}
+                onClick={() => updateQueryParams(currentType, "image")}
                 className={`btn join-item ${filter === "image" ? "btn-primary" : "btn-outline"}`}
               >
                 <ImageIcon className="w-4 h-4 mr-2" />
                 Images
               </button>
               <button
-                onClick={() => {
-                  setFilter("video");
-                  updateQueryParams(currentType, "video");
-                }}
+                onClick={() => updateQueryParams(currentType, "video")}
                 className={`btn join-item ${filter === "video" ? "btn-primary" : "btn-outline"}`}
               >
                 <Video className="w-4 h-4 mr-2" />
