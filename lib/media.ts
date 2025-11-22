@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 
 const types = types_json as Record<string, (string|number)[]>;
-const mediaPath = path.join(process.cwd(), "data", "media.json");
+/*const mediaPath = path.join(process.cwd(), "data", "media.json");
 
 function getAllMedia(): Record<string, MediaItem[]> {
   try {
@@ -70,6 +70,47 @@ function clearMediaItems(type?: string) {
   if (type) delete allMedia[type];
   else Object.keys(allMedia).forEach(key => delete allMedia[key]);
   fs.writeFileSync(mediaPath, JSON.stringify(allMedia, null, 2));
+}*/
+
+let mediaData: Record<string, MediaItem[]> = {};
+
+function getAllMedia(): Record<string, MediaItem[]> {
+  return {...mediaData};
+}
+
+function getMedia(type: string): MediaItem[] {
+  return getAllMedia()[type] || [];
+}
+
+function saveMediaItems(type: string, media: MediaItem[]) {
+  mediaData[type] = media;
+}
+
+function saveAllMediaItems(media: Record<string, MediaItem[]>) {
+  mediaData = {...media};
+}
+
+function appendMediaItems(type: string, media: MediaItem[]) {
+  if (!media || media.length === 0) return;
+  
+  const existing = mediaData[type] || [];
+  // Filter out duplicates by URL before appending
+  const existingUrls = new Set(existing.map(item => item.url));
+  const newItems = media.filter(item => !existingUrls.has(item.url));
+  
+  if (newItems.length > 0)
+    mediaData[type] = [...newItems, ...existing];
+}
+
+function appendAllMediaItems(media: Record<string, MediaItem[]>) {
+  Object.entries(media).forEach(([type, items]) => {
+    mediaData[type] = [...items, ...(mediaData[type] || [])];
+  });
+}
+
+function clearMediaItems(type?: string) {
+  if (type) delete mediaData[type];
+  else Object.keys(mediaData).forEach(key => delete mediaData[key]);
 }
 
 export type MediaType = "image" | "video";
