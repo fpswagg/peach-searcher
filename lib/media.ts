@@ -85,6 +85,7 @@ export interface MediaItem {
   url: string;
   thumbnail?: string;
   duration?: number; // Duration in seconds for videos
+  created_utc?: number; // Timestamp for sorting (newest first)
 }
 
 export const ITEMS_PER_PAGE = 24;
@@ -152,6 +153,7 @@ async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: bo
       duration,
       name: redditPost.title,
       description: redditPost.selftext || undefined,
+      created_utc: redditPost.created_utc,
     };
   }
 
@@ -183,6 +185,7 @@ async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: bo
       thumbnail: thumbnail || undefined,
       name: redditPost.title,
       description: redditPost.selftext || undefined,
+      created_utc: redditPost.created_utc,
     };
   }
 
@@ -197,6 +200,7 @@ async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: bo
     description: redditPost.selftext || undefined,
     type: "image",
     url: redditPost.url,
+    created_utc: redditPost.created_utc,
   };
 }
 
@@ -277,8 +281,11 @@ export async function generateMediaItems(type: string): Promise<MediaItem[]> {
     }
   }
 
+  // Sort by created_utc timestamp (newest first - highest timestamp first)
+  allPosts.sort((a, b) => (b.created_utc || 0) - (a.created_utc || 0));
+  
   // Return generated items (newest first)
-  return allPosts.reverse();
+  return allPosts;
 }
 
 export async function getMediaItems(type: string, limit: number = ITEMS_PER_PAGE): Promise<MediaItem[]> {

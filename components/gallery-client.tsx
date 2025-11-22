@@ -65,15 +65,19 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
             .then(result => {
               if (result.success && result.data) {
                 saveCachedMedia(type, result.data);
-                // Update items if user hasn't changed type/filter and we're still on first page
-                if (currentType === type && allItems.length <= limit) {
-                  let filtered = result.data;
-                  if (mediaFilter && mediaFilter !== "all") {
-                    filtered = result.data.filter((item: MediaItem) => item.type === mediaFilter);
+                // Update items if we're still on first page (type check happens via closure)
+                setAllItems((prevItems) => {
+                  // Only update if we haven't changed type and still on first page
+                  if (prevItems.length <= limit) {
+                    let filtered = result.data;
+                    if (mediaFilter && mediaFilter !== "all") {
+                      filtered = result.data.filter((item: MediaItem) => item.type === mediaFilter);
+                    }
+                    return filtered.slice(0, limit);
                   }
-                  setAllItems(filtered.slice(0, limit));
-                  setHasMoreItems(result.data.length >= limit);
-                }
+                  return prevItems;
+                });
+                setHasMoreItems(result.data.length >= limit);
               }
             })
             .catch(err => console.error("Background fetch error:", err));
@@ -193,10 +197,19 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
       setIsLoading(false);
       setIsLoadingMore(false);
     }
-  }, [allItems.length, currentType]);
+  }, [allItems.length]);
 
   // Reload when type or filter changes (but not on initial mount)
   const isInitialMount = useRef(true);
+  const currentTypeRef = useRef(currentType);
+  const filterRef = useRef(filter);
+  
+  // Keep refs in sync
+  useEffect(() => {
+    currentTypeRef.current = currentType;
+    filterRef.current = filter;
+  }, [currentType, filter]);
+  
   useEffect(() => {
     // Skip initial mount - we already have initialItems or cached items
     if (isInitialMount.current) {
@@ -204,27 +217,31 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
       return;
     }
     
+    const type = currentTypeRef.current;
+    const mediaFilter = filterRef.current;
+    
     // Check cache first when switching types
     if (typeof window !== "undefined") {
-      const cached = getCachedMedia(currentType);
+      const cached = getCachedMedia(type);
       if (cached && cached.length > 0) {
         let filteredCached = cached;
-        if (filter !== "all") {
-          filteredCached = cached.filter((item: MediaItem) => item.type === filter);
+        if (mediaFilter !== "all") {
+          filteredCached = cached.filter((item: MediaItem) => item.type === mediaFilter);
         }
         // Show first page from cache
         setAllItems(filteredCached.slice(0, ITEMS_PER_PAGE));
         setHasMoreItems(filteredCached.length > ITEMS_PER_PAGE || cached.length > ITEMS_PER_PAGE);
         // Still fetch in background to update cache
-        fetchMediaItems(currentType, ITEMS_PER_PAGE, false, filter);
+        fetchMediaItems(type, ITEMS_PER_PAGE, false, mediaFilter);
         return;
       }
     }
     
     setAllItems([]);
     setHasMoreItems(true);
-    fetchMediaItems(currentType, ITEMS_PER_PAGE, false, filter);
-  }, [currentType, filter, fetchMediaItems]);
+    fetchMediaItems(type, ITEMS_PER_PAGE, false, mediaFilter);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentType, filter]);
 
   // Filter media items based on selected filter (client-side for already loaded items)
   const filteredItems = useMemo(() => {

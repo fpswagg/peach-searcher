@@ -8,5 +8,6 @@ export interface MediaItem {
   url: string;
   thumbnail?: string;
   duration?: number; // Duration in seconds for videos
+  created_utc?: number; // Timestamp for sorting (newest first)
 }
 
