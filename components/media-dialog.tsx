@@ -184,6 +184,7 @@ export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
                     </div>
                   )}
                   <div className="relative w-full h-full flex items-center justify-center bg-base-300 rounded-lg" style={{ maxHeight: '70vh', minHeight: '300px', maxWidth: '100%' }}>
+                    {/* Use img tag for images and GIFs - GIFs will auto-animate */}
                     <img
                       src={item.url}
                       alt={item.name}

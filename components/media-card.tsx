@@ -107,29 +107,36 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
                     <span className="loading loading-spinner loading-md text-primary"></span>
                   </div>
                 )}
-                {/* Use thumbnail if available for faster loading, otherwise use full image */}
-                <Image
-                  src={item.thumbnail || item.url}
-                  alt={item.name}
-                  fill
-                  className={`object-contain transition-all duration-300 group-hover:scale-105 ${imageLoading ? 'opacity-0' : 'opacity-100'}`}
-                  sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
-                  loading="lazy"
-                  unoptimized
-                  onError={() => {
-                    // If thumbnail fails, try the full image URL
-                    if (item.thumbnail && item.thumbnail !== item.url) {
-                      setImageError(false);
-                      // Will retry with full URL on next render
-                    } else {
-                      setImageError(true);
-                      setImageLoading(false);
-                    }
-                  }}
-                  onLoad={handleImageLoad}
-                />
-                {/* Load full image in background for better quality on hover */}
-                {item.thumbnail && item.thumbnail !== item.url && (
+                {/* For GIFs, always use the GIF URL so it animates. For other images, use thumbnail if available */}
+                {(() => {
+                  const isGif = item.url.toLowerCase().endsWith('.gif') || item.url.toLowerCase().includes('.gif?');
+                  const imageSrc = isGif ? item.url : (item.thumbnail || item.url);
+                  
+                  return (
+                    <Image
+                      src={imageSrc}
+                      alt={item.name}
+                      fill
+                      className={`object-contain transition-all duration-300 group-hover:scale-105 ${imageLoading ? 'opacity-0' : 'opacity-100'}`}
+                      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
+                      loading="lazy"
+                      unoptimized
+                      onError={() => {
+                        // If thumbnail fails, try the full image URL
+                        if (item.thumbnail && item.thumbnail !== item.url && !isGif) {
+                          setImageError(false);
+                          // Will retry with full URL on next render
+                        } else {
+                          setImageError(true);
+                          setImageLoading(false);
+                        }
+                      }}
+                      onLoad={handleImageLoad}
+                    />
+                  );
+                })()}
+                {/* Load full image in background for better quality on hover (not for GIFs) */}
+                {item.thumbnail && item.thumbnail !== item.url && !item.url.toLowerCase().endsWith('.gif') && !item.url.toLowerCase().includes('.gif?') && (
                   <Image
                     src={item.url}
                     alt=""

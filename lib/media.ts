@@ -176,19 +176,19 @@ async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: bo
     }
   }
 
-  // Check if it's a GIF or GIFV (treat as video)
+  // Check if it's a GIFV (treat as video, convert to MP4)
   const urlLower = redditPost.url.toLowerCase();
-  const isGif = urlLower.endsWith('.gif') || urlLower.endsWith('.gifv') || urlLower.includes('.gif?') || urlLower.includes('.gifv?');
+  const isGifv = urlLower.endsWith('.gifv') || urlLower.includes('.gifv?');
   
-  // Check if it's a Reddit video
-  const isRedditVideo = redditPost.is_video || redditPost.url.includes('v.redd.it') || isGif;
+  // Check if it's a Reddit video (not regular GIF - those are images)
+  const isRedditVideo = redditPost.is_video || redditPost.url.includes('v.redd.it') || isGifv;
 
   if (isRedditVideo) {
     let videoUrl = redditPost.url;
     let thumbnail = redditPost.thumbnail;
 
     // For GIFV, convert to MP4 if possible
-    if (isGif && urlLower.endsWith('.gifv')) {
+    if (isGifv) {
       videoUrl = redditPost.url.replace(/\.gifv$/i, '.mp4');
     }
 
@@ -220,8 +220,11 @@ async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: bo
     };
   }
 
-  // It's an image (must be from reddit media domain)
-  if (!redditPost.is_reddit_media_domain) {
+  // Check if it's a regular GIF (treat as image - will auto-animate)
+  const isGif = urlLower.endsWith('.gif') || urlLower.includes('.gif?');
+  
+  // It's an image (must be from reddit media domain, or it's a GIF)
+  if (!redditPost.is_reddit_media_domain && !isGif) {
     return null;
   }
 
