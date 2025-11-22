@@ -195,31 +195,36 @@ async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: bo
 
   // Check if it's a Redgif
   if (hasIDRG(redditPost.url)) {
+    console.log(`[Redgif] Detected Redgif URL: ${redditPost.url}`);
+    
     if (!acceptsRedGifs) {
+      console.log(`[Redgif] Redgifs not accepted for this type, skipping`);
       return null;
     }
 
     const redgifId = extractIdRG(redditPost.url);
     if (!redgifId) {
-      console.warn(`Failed to extract Redgif ID from URL: ${redditPost.url}`);
+      console.warn(`[Redgif] Failed to extract Redgif ID from URL: ${redditPost.url}`);
       return null;
     }
+
+    console.log(`[Redgif] Extracted ID: ${redgifId}, fetching from API...`);
 
     try {
       const redgif = await getGIFs(redgifId);
       if (redgif.error) {
-        console.error(`Error fetching Redgif ${redgifId}:`, redgif.error);
+        console.error(`[Redgif] Error fetching Redgif ${redgifId}:`, redgif.error);
         return null;
       }
       
       if (!redgif.gifs || redgif.gifs.length === 0) {
-        console.warn(`No GIFs found for Redgif ID: ${redgifId}`);
+        console.warn(`[Redgif] No GIFs found for Redgif ID: ${redgifId}`);
         return null;
       }
 
       const gifData = redgif.gifs[0];
       if (!gifData.urls) {
-        console.warn(`No URLs found for Redgif ID: ${redgifId}`);
+        console.warn(`[Redgif] No URLs found for Redgif ID: ${redgifId}`);
         return null;
       }
 
@@ -228,9 +233,11 @@ async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: bo
       const duration = gifData.duration;
 
       if (!url) {
-        console.warn(`No video URL found for Redgif ID: ${redgifId}`);
+        console.warn(`[Redgif] No video URL found for Redgif ID: ${redgifId}`);
         return null;
       }
+
+      console.log(`[Redgif] Successfully processed Redgif ${redgifId}, URL: ${url}`);
 
       return {
         id: generateMediaId(url, itemCounter),
@@ -243,7 +250,7 @@ async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: bo
         created_utc: redditPost.created_utc,
       };
     } catch (error) {
-      console.error(`Exception while processing Redgif ${redgifId}:`, error);
+      console.error(`[Redgif] Exception while processing Redgif ${redgifId}:`, error);
       return null;
     }
   }
@@ -390,14 +397,31 @@ export async function generateMediaItems(type: string): Promise<MediaItem[]> {
         // Include gallery posts (they have gallery_data) and regular media posts
         const validPosts = redditResponse.data.filter(
           post => {
+            if (!post.url) {
+              return false;
+            }
+            
             // Gallery posts don't need to match the regular criteria
             if (post.gallery_data && post.media_metadata) {
               return true;
             }
+            
+            // Redgif posts - include if acceptsRedGifs is true
+            if (hasIDRG(post.url)) {
+              if (acceptsRedGifs) {
+                console.log(`[Filter] Including Redgif post: ${post.url}`);
+              } else {
+                console.log(`[Filter] Excluding Redgif post (not accepted): ${post.url}`);
+              }
+              return acceptsRedGifs;
+            }
+            
             // Regular posts need to match the existing criteria
-            return post.url && (!hasIDRG(post.url) || acceptsRedGifs) && (post.is_video || post.is_reddit_media_domain);
+            return post.is_video || post.is_reddit_media_domain;
           }
         );
+        
+        console.log(`[Filter] Found ${validPosts.length} valid posts out of ${redditResponse.data.length} total posts`);
 
         // Convert posts to media items
         const mediaItems: MediaItem[] = [];
