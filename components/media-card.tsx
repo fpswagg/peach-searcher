@@ -74,6 +74,7 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
                   fill
                   className={`object-contain transition-all duration-300 group-hover:scale-105 ${imageLoading ? 'opacity-0' : 'opacity-100'}`}
                   sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
+                  loading="lazy"
                   unoptimized
                   onError={() => {
                     setImageError(true);
@@ -112,6 +113,7 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
                   fill
                   className={`object-contain transition-all duration-300 group-hover:scale-105 ${imageLoading ? 'opacity-0' : 'opacity-100'}`}
                   sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 25vw"
+                  loading="lazy"
                   unoptimized
                   onError={() => {
                     setImageError(true);

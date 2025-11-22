@@ -129,32 +129,51 @@ async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: bo
 
     const redgifId = extractIdRG(redditPost.url);
     if (!redgifId) {
+      console.warn(`Failed to extract Redgif ID from URL: ${redditPost.url}`);
       return null;
     }
 
-    const redgif = await getGIFs(redgifId);
-    if (redgif.error || !redgif.gifs.length) {
+    try {
+      const redgif = await getGIFs(redgifId);
+      if (redgif.error) {
+        console.error(`Error fetching Redgif ${redgifId}:`, redgif.error);
+        return null;
+      }
+      
+      if (!redgif.gifs || redgif.gifs.length === 0) {
+        console.warn(`No GIFs found for Redgif ID: ${redgifId}`);
+        return null;
+      }
+
+      const gifData = redgif.gifs[0];
+      if (!gifData.urls) {
+        console.warn(`No URLs found for Redgif ID: ${redgifId}`);
+        return null;
+      }
+
+      const url = extractURLRG(gifData.urls);
+      const thumbnail = extractThumbnailRG(gifData.urls);
+      const duration = gifData.duration;
+
+      if (!url) {
+        console.warn(`No video URL found for Redgif ID: ${redgifId}`);
+        return null;
+      }
+
+      return {
+        id: generateMediaId(url, itemCounter),
+        type: "video",
+        url,
+        thumbnail: thumbnail || undefined,
+        duration: duration || undefined,
+        name: redditPost.title,
+        description: redditPost.selftext || undefined,
+        created_utc: redditPost.created_utc,
+      };
+    } catch (error) {
+      console.error(`Exception while processing Redgif ${redgifId}:`, error);
       return null;
     }
-
-    const url = extractURLRG(redgif.gifs[0].urls);
-    const thumbnail = extractThumbnailRG(redgif.gifs[0].urls);
-    const duration = redgif.gifs[0].duration;
-
-    if (!url) {
-      return null;
-    }
-
-    return {
-      id: generateMediaId(url, itemCounter),
-      type: "video",
-      url,
-      thumbnail,
-      duration,
-      name: redditPost.title,
-      description: redditPost.selftext || undefined,
-      created_utc: redditPost.created_utc,
-    };
   }
 
   // Check if it's a Reddit video
@@ -248,36 +267,59 @@ export async function generateMediaItems(type: string): Promise<MediaItem[]> {
   const existingUrls = new Set<string>();
   let itemCounter = 0;
 
-  // Fetch posts from each subreddit
-  for (const subreddit of uniqueSubreddits) {
-    try {
-      const redditResponse = await getRedditPosts(subreddit);
-      if (redditResponse.error || !redditResponse.data || !Array.isArray(redditResponse.data)) {
-        console.error(`Error fetching posts from ${subreddit}:`, redditResponse.error);
-        continue;
-      }
-
-      // Filter posts that are valid media and convert them
-      const validPosts = redditResponse.data.filter(
-        post => post.url && (!hasIDRG(post.url) || acceptsRedGifs) && (post.is_video || post.is_reddit_media_domain)
-      );
-
-      // Convert posts to media items
-      for (const redditPost of validPosts) {
-        // Skip if already exists
-        if (existingUrls.has(redditPost.url)) {
-          continue;
+  // Fetch posts from each subreddit with rate limiting
+  // Process in batches to avoid overwhelming Reddit API
+  const BATCH_SIZE = 3; // Process 3 subreddits at a time
+  const DELAY_BETWEEN_BATCHES = 1000; // 1 second delay between batches
+  
+  for (let i = 0; i < uniqueSubreddits.length; i += BATCH_SIZE) {
+    const batch = uniqueSubreddits.slice(i, i + BATCH_SIZE);
+    
+    // Process batch in parallel
+    const batchPromises = batch.map(async (subreddit) => {
+      try {
+        const redditResponse = await getRedditPosts(subreddit);
+        if (redditResponse.error || !redditResponse.data || !Array.isArray(redditResponse.data)) {
+          console.error(`Error fetching posts from ${subreddit}:`, redditResponse.error);
+          return [];
         }
 
-        const mediaItem = await convertPostToMediaItem(redditPost, acceptsRedGifs, itemCounter++);
-        if (mediaItem && !existingUrls.has(mediaItem.url)) {
-          allPosts.push(mediaItem);
-          existingUrls.add(mediaItem.url); // Track to avoid duplicates within this batch
+        // Filter posts that are valid media and convert them
+        const validPosts = redditResponse.data.filter(
+          post => post.url && (!hasIDRG(post.url) || acceptsRedGifs) && (post.is_video || post.is_reddit_media_domain)
+        );
+
+        // Convert posts to media items
+        const mediaItems: MediaItem[] = [];
+        for (const redditPost of validPosts) {
+          // Skip if already exists
+          if (existingUrls.has(redditPost.url)) {
+            continue;
+          }
+
+          const mediaItem = await convertPostToMediaItem(redditPost, acceptsRedGifs, itemCounter++);
+          if (mediaItem && !existingUrls.has(mediaItem.url)) {
+            mediaItems.push(mediaItem);
+            existingUrls.add(mediaItem.url); // Track to avoid duplicates within this batch
+          }
         }
+        return mediaItems;
+      } catch (error) {
+        console.error(`Error processing subreddit ${subreddit}:`, error);
+        return [];
       }
-    } catch (error) {
-      console.error(`Error processing subreddit ${subreddit}:`, error);
-      continue;
+    });
+
+    // Wait for batch to complete
+    const batchResults = await Promise.all(batchPromises);
+    // Flatten results and add to allPosts
+    for (const items of batchResults) {
+      allPosts.push(...items);
+    }
+
+    // Add delay between batches (except for the last batch)
+    if (i + BATCH_SIZE < uniqueSubreddits.length) {
+      await new Promise(resolve => setTimeout(resolve, DELAY_BETWEEN_BATCHES));
     }
   }
 

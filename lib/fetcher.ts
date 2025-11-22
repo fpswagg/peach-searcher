@@ -262,13 +262,23 @@ export async function authenticateRG(): Promise<string> {
 }
 
 export function extractIdRG(link: string) {
-    if (/^https:\/\/www.redgifs.com\/watch\//.test(link)) {
-        return (
-            link
-                .match(/(?<=https:\/\/www.redgifs.com\/watch\/).*/)?.[0]
-                ?.replace(/(#|\?).*/g, '') ?? null
-        );
-    } else return null;
+    // Handle various Redgif URL patterns
+    // https://www.redgifs.com/watch/ID
+    // https://redgifs.com/watch/ID
+    // https://i.redgifs.com/i/ID
+    const patterns = [
+        /(?:https?:\/\/)?(?:www\.)?redgifs\.com\/watch\/([^?#\/]+)/i,
+        /(?:https?:\/\/)?i\.redgifs\.com\/i\/([^?#\/]+)/i,
+    ];
+    
+    for (const pattern of patterns) {
+        const match = link.match(pattern);
+        if (match && match[1]) {
+            return match[1].replace(/(#|\?).*/g, '');
+        }
+    }
+    
+    return null;
 }
 
 export function hasIDRG(link: string) {
