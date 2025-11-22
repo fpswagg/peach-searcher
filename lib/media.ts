@@ -79,7 +79,7 @@ function getAllMedia(): Record<string, MediaItem[]> {
 }
 
 function getMedia(type: string): MediaItem[] {
-  return getAllMedia()[type] || [];
+  return [...(mediaData[type] || [])];
 }
 
 function saveMediaItems(type: string, media: MediaItem[]) {
@@ -100,6 +100,8 @@ function appendMediaItems(type: string, media: MediaItem[]) {
   
   if (newItems.length > 0)
     mediaData[type] = [...newItems, ...existing];
+
+  console.log(`Added ${newItems.length} to mediaData[${type}]`);
 }
 
 function appendAllMediaItems(media: Record<string, MediaItem[]>) {
@@ -354,6 +356,12 @@ export async function mediaItems(type: string, limit: number = ITEMS_PER_PAGE, o
   
   // Reverse the list to show newest first
   const reversedList = allMediaList.slice().reverse();
+
+  console.log({
+    cutArray: reversedList.slice(offset, offset + limit).map(x=>x.url),
+    array: reversedList.map(x=>x.url),
+    offset, limit
+  })
   
   // Return the requested slice
   return reversedList.slice(offset, offset + limit);

@@ -7,20 +7,18 @@ export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const type = searchParams.get("type") || "All";
-    const limit = Math.min(Math.max(parseInt(searchParams.get("limit") || "24", 10), 1), 100); // Clamp between 1 and 100
+    const limit = Math.max(parseInt(searchParams.get("limit") || "24", 10), 1);
     const offset = Math.max(parseInt(searchParams.get("offset") || "0", 10), 0); // Offset for pagination
     const reset = searchParams.get("reset") === "true";
     const refresh = searchParams.get("refresh") === "true";
 
     // Clear cache if reset is requested (no-op but kept for compatibility)
-    if (reset) {
+    if (reset) 
       clearMediaCache(type);
-    }
 
     // Generate/refresh media items if requested
-    if (refresh) {
+    if (refresh)
       await generateMediaItems(type);
-    }
 
     const items = await mediaItems(type, limit, offset);
     
