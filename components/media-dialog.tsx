@@ -38,11 +38,28 @@ export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
 
   const handleDownload = async () => {
     try {
-      // Try to fetch the file as a blob first
-      const response = await fetch(item.url, {
-        mode: 'cors',
-        credentials: 'omit',
-      });
+      // Try using proxy endpoint first to avoid CORS issues
+      let response: Response;
+      try {
+        response = await fetch(`/api/proxy?url=${encodeURIComponent(item.url)}`, {
+          method: 'GET',
+        });
+      } catch (proxyError) {
+        // If proxy fails, try direct fetch
+        try {
+          response = await fetch(item.url, {
+            mode: 'cors',
+            credentials: 'omit',
+            headers: {
+              'Referer': item.url,
+            },
+          });
+        } catch (fetchError) {
+          // If both fail, open in new tab
+          window.open(item.url, "_blank");
+          return;
+        }
+      }
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -54,12 +71,19 @@ export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
       const blobUrl = URL.createObjectURL(blob);
       
       // Get file extension from URL or default based on type
-      const urlExtension = item.url.split('.').pop()?.split('?')[0] || '';
-      const extension = urlExtension || (item.type === 'video' ? 'mp4' : 'jpg');
+      const urlPath = item.url.split('?')[0]; // Remove query params
+      const urlExtension = urlPath.split('.').pop()?.toLowerCase() || '';
+      let extension = urlExtension;
+      
+      // Validate extension or set default
+      if (!extension || (extension.length > 4)) {
+        extension = item.type === 'video' ? 'mp4' : 'jpg';
+      }
       
       // Sanitize file name
       const sanitizedName = item.name
-        .replace(/[^a-z0-9]/gi, '_')
+        .replace(/[^a-z0-9\s-]/gi, '_')
+        .replace(/\s+/g, '_')
         .substring(0, 100); // Limit length
       const fileName = `${sanitizedName}.${extension}`;
       
@@ -67,12 +91,15 @@ export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
       const link = document.createElement("a");
       link.href = blobUrl;
       link.download = fileName;
+      link.style.display = 'none';
       document.body.appendChild(link);
       link.click();
-      document.body.removeChild(link);
       
-      // Clean up the object URL after a delay
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
+      // Clean up
+      setTimeout(() => {
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
+      }, 100);
     } catch (error) {
       console.error('Download failed:', error);
       // Fallback: open in new tab (works for CORS issues)
@@ -113,13 +140,13 @@ export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
         </DialogHeader>
 
         {/* Media Preview Section */}
-        <div className="flex-1 overflow-hidden flex items-center justify-center bg-base-200 p-4 sm:p-6 min-h-0 relative" style={{ minHeight: '250px', maxHeight: '60vh' }}>
+        <div className="flex-1 overflow-hidden flex items-center justify-center bg-base-200 p-4 sm:p-6 min-h-0 relative" style={{ minHeight: '300px', maxHeight: '70vh' }}>
           {item.type === "video" ? (
-            <div className="relative w-full h-full max-w-full max-h-full flex items-center justify-center" style={{ minHeight: '250px' }}>
+            <div className="relative w-full h-full max-w-full max-h-full flex items-center justify-center" style={{ minHeight: '300px' }}>
               {!videoError ? (
                 <>
                   {videoLoading && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-base-300 rounded-lg">
+                    <div className="absolute inset-0 flex items-center justify-center bg-base-300 rounded-lg z-20">
                       <span className="loading loading-spinner loading-lg text-primary"></span>
                     </div>
                   )}
@@ -128,26 +155,27 @@ export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
                     controls
                     className="max-w-full max-h-full w-auto h-auto object-contain rounded-lg relative z-10"
                     autoPlay
+                    playsInline
                     onError={() => {
                       setVideoError(true);
                       setVideoLoading(false);
                     }}
                     onLoadedData={() => setVideoLoading(false)}
                     onCanPlay={() => setVideoLoading(false)}
-                    style={{ maxHeight: '60vh' }}
+                    style={{ maxHeight: '70vh', maxWidth: '100%' }}
                   >
                     Your browser does not support the video tag.
                   </video>
                 </>
               ) : (
-                <div className="flex flex-col items-center justify-center h-full min-h-[250px] text-center p-8 bg-base-300 rounded-lg">
+                <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center p-8 bg-base-300 rounded-lg">
                   <AlertCircle className="h-12 w-12 text-base-content/30 mb-4" />
                   <p className="text-sm text-base-content/70">Failed to load video</p>
                 </div>
               )}
             </div>
           ) : (
-            <div className="relative w-full h-full max-w-full max-h-full flex items-center justify-center" style={{ minHeight: '250px' }}>
+            <div className="relative w-full h-full max-w-full max-h-full flex items-center justify-center" style={{ minHeight: '300px' }}>
               {!imageError ? (
                 <>
                   {imageLoading && (
@@ -155,26 +183,22 @@ export function MediaDialog({ item, open, onOpenChange }: MediaDialogProps) {
                       <span className="loading loading-spinner loading-lg text-primary"></span>
                     </div>
                   )}
-                  <div className="relative w-full h-full flex items-center justify-center bg-base-300 rounded-lg" style={{ maxHeight: '60vh', minHeight: '250px' }}>
-                    <Image
+                  <div className="relative w-full h-full flex items-center justify-center bg-base-300 rounded-lg" style={{ maxHeight: '70vh', minHeight: '300px', maxWidth: '100%' }}>
+                    <img
                       src={item.url}
                       alt={item.name}
-                      width={1200}
-                      height={800}
                       className="max-w-full max-h-full w-auto h-auto object-contain rounded-lg relative z-10"
-                      sizes="(max-width: 768px) 98vw, (max-width: 1200px) 90vw, 80vw"
-                      unoptimized
+                      style={{ maxHeight: '70vh', maxWidth: '100%' }}
                       onError={() => {
                         setImageError(true);
                         setImageLoading(false);
                       }}
                       onLoad={() => setImageLoading(false)}
-                      priority
                     />
                   </div>
                 </>
               ) : (
-                <div className="flex flex-col items-center justify-center h-full min-h-[250px] text-center p-8 bg-base-300 rounded-lg">
+                <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center p-8 bg-base-300 rounded-lg">
                   <AlertCircle className="h-12 w-12 text-base-content/30 mb-4" />
                   <p className="text-sm text-base-content/70">Failed to load image</p>
                 </div>

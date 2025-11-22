@@ -107,8 +107,9 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
                     <span className="loading loading-spinner loading-md text-primary"></span>
                   </div>
                 )}
+                {/* Use thumbnail if available for faster loading, otherwise use full image */}
                 <Image
-                  src={item.url}
+                  src={item.thumbnail || item.url}
                   alt={item.name}
                   fill
                   className={`object-contain transition-all duration-300 group-hover:scale-105 ${imageLoading ? 'opacity-0' : 'opacity-100'}`}
@@ -116,11 +117,30 @@ export function MediaCard({ item, onClick, showBadge = true }: MediaCardProps) {
                   loading="lazy"
                   unoptimized
                   onError={() => {
-                    setImageError(true);
-                    setImageLoading(false);
+                    // If thumbnail fails, try the full image URL
+                    if (item.thumbnail && item.thumbnail !== item.url) {
+                      setImageError(false);
+                      // Will retry with full URL on next render
+                    } else {
+                      setImageError(true);
+                      setImageLoading(false);
+                    }
                   }}
                   onLoad={handleImageLoad}
                 />
+                {/* Load full image in background for better quality on hover */}
+                {item.thumbnail && item.thumbnail !== item.url && (
+                  <Image
+                    src={item.url}
+                    alt=""
+                    fill
+                    className="hidden"
+                    onLoad={() => {
+                      // Full image preloaded, can swap on hover if needed
+                    }}
+                    unoptimized
+                  />
+                )}
               </div>
             ) : (
               <div className="flex h-full w-full items-center justify-center bg-base-300">

@@ -19,8 +19,9 @@ interface GalleryClientProps {
 }
 
 export function GalleryClient({ initialItems, initialType, initialFilter, types }: GalleryClientProps) {
-  // Try to load from cache first, fallback to initialItems
-  const cachedItems = typeof window !== "undefined" ? getCachedMedia(initialType) : null;
+  // Don't use cache when filter is applied - cache doesn't respect filters
+  // Only use cache if filter is "all" and we have cached items
+  const cachedItems = typeof window !== "undefined" && initialFilter === "all" ? getCachedMedia(initialType) : null;
   const initialData = cachedItems || initialItems;
   const [allItems, setAllItems] = useState<MediaItem[]>(initialData); // Store items (already filtered server-side)
   const [isLoading, setIsLoading] = useState(false);
@@ -50,11 +51,12 @@ export function GalleryClient({ initialItems, initialType, initialFilter, types 
   }, []);
 
   // Save initial items to cache if we have them and no cache exists
+  // Only cache when filter is "all" to avoid caching filtered results
   useEffect(() => {
-    if (typeof window !== "undefined" && initialItems.length > 0 && !cachedItems) {
+    if (typeof window !== "undefined" && initialItems.length > 0 && !cachedItems && initialFilter === "all") {
       saveCachedMedia(initialType, initialItems);
     }
-  }, [initialType, initialItems, cachedItems]);
+  }, [initialType, initialItems, cachedItems, initialFilter]);
 
   // No need to sync with URL - page will reload on changes
 
@@ -81,9 +83,8 @@ export function GalleryClient({ initialItems, initialType, initialFilter, types 
       if (result.success) {
         const newItems = result.data || [];
         
-        // Save to cache (save unfiltered items if available)
-        if (typeof window !== "undefined") {
-          // Note: We're saving filtered items, but for pagination we track filtered count
+        // Save to cache only if filter is "all" (don't cache filtered results)
+        if (typeof window !== "undefined" && filter === "all") {
           if (append) {
             appendCachedMedia(type, result.data);
           } else {

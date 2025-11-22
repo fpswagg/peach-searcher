@@ -176,12 +176,21 @@ async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: bo
     }
   }
 
+  // Check if it's a GIF or GIFV (treat as video)
+  const urlLower = redditPost.url.toLowerCase();
+  const isGif = urlLower.endsWith('.gif') || urlLower.endsWith('.gifv') || urlLower.includes('.gif?') || urlLower.includes('.gifv?');
+  
   // Check if it's a Reddit video
-  const isRedditVideo = redditPost.is_video || redditPost.url.includes('v.redd.it');
+  const isRedditVideo = redditPost.is_video || redditPost.url.includes('v.redd.it') || isGif;
 
   if (isRedditVideo) {
     let videoUrl = redditPost.url;
     let thumbnail = redditPost.thumbnail;
+
+    // For GIFV, convert to MP4 if possible
+    if (isGif && urlLower.endsWith('.gifv')) {
+      videoUrl = redditPost.url.replace(/\.gifv$/i, '.mp4');
+    }
 
     // Try to extract video URL from media object
     if (redditPost.media?.reddit_video?.fallback_url) {
@@ -193,6 +202,9 @@ async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: bo
     // Get thumbnail from media if available
     if (redditPost.media?.reddit_video?.thumbnail) {
       thumbnail = redditPost.media.reddit_video.thumbnail;
+    } else if (redditPost.preview?.images?.[0]?.source?.url) {
+      // Use preview image as thumbnail if available
+      thumbnail = redditPost.preview.images[0].source.url.replace(/&amp;/g, '&');
     } else if (redditPost.thumbnail && redditPost.thumbnail !== 'self' && redditPost.thumbnail !== 'default' && redditPost.thumbnail !== 'nsfw') {
       thumbnail = redditPost.thumbnail.replace(/&amp;/g, '&');
     }
@@ -213,12 +225,27 @@ async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: bo
     return null;
   }
 
+  // Get best thumbnail/preview for images
+  let thumbnail: string | undefined;
+  if (redditPost.preview?.images?.[0]?.source?.url) {
+    // Use preview image as thumbnail (higher quality)
+    thumbnail = redditPost.preview.images[0].source.url.replace(/&amp;/g, '&');
+  } else if (redditPost.preview?.images?.[0]?.resolutions && redditPost.preview.images[0].resolutions.length > 0) {
+    // Use highest resolution preview
+    const resolutions = redditPost.preview.images[0].resolutions;
+    const highestRes = resolutions[resolutions.length - 1];
+    if (highestRes?.url) {
+      thumbnail = highestRes.url.replace(/&amp;/g, '&');
+    }
+  }
+
   return {
     id: generateMediaId(redditPost.url, itemCounter),
     name: redditPost.title,
     description: redditPost.selftext || undefined,
     type: "image",
     url: redditPost.url,
+    thumbnail: thumbnail,
     created_utc: redditPost.created_utc,
   };
 }

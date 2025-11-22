@@ -93,6 +93,21 @@ export interface RedditPost {
     over_18: boolean;
     permalink: string;
     pinned: boolean;
+    preview?: {
+        images?: Array<{
+            source?: {
+                url: string;
+                width: number;
+                height: number;
+            };
+            resolutions?: Array<{
+                url: string;
+                width: number;
+                height: number;
+            }>;
+        }>;
+        enabled?: boolean;
+    };
     pwls: null | number;
     quarantine: boolean;
     removal_reason: null | string;
