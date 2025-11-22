@@ -17,22 +17,21 @@ export async function GET(request: NextRequest) {
     if (reset) 
       clearMediaCache(type);
 
-    // Fetch items - server always generates fresh data
-    // When filtering, we need to fetch more items to account for filtering
-    // Then filter and return the requested amount
-    const fetchLimit = filter !== "all" ? limit * 3 : limit; // Fetch 3x when filtering to ensure we get enough
-    const items = await mediaItems(type, fetchLimit, offset);
+    // Fetch all items without limit - server generates all available media
+    // Then apply filtering and pagination
+    // Use a very large limit to fetch all generated items
+    const allItems = await mediaItems(type, 100000, 0);
     
-    // Apply server-side filtering
-    let filteredItems = items;
+    // Apply server-side filtering first
+    let filteredItems = allItems;
     if (filter === "image") {
-      filteredItems = items.filter(item => item.type === "image");
+      filteredItems = allItems.filter(item => item.type === "image");
     } else if (filter === "video") {
-      filteredItems = items.filter(item => item.type === "video");
+      filteredItems = allItems.filter(item => item.type === "video");
     }
     
-    // Return only the requested limit (first N filtered items)
-    const resultItems = filteredItems.slice(0, limit);
+    // Apply pagination after filtering
+    const resultItems = filteredItems.slice(offset, offset + limit);
     
     return NextResponse.json({
       success: true,
@@ -42,7 +41,8 @@ export async function GET(request: NextRequest) {
       limit,
       offset,
       count: resultItems.length,
-      hasMore: filteredItems.length > limit, // Indicate if there are more filtered items
+      hasMore: offset + limit < filteredItems.length, // Indicate if there are more filtered items
+      totalFiltered: filteredItems.length, // Total count of filtered items
     });
   } catch (error) {
     console.error("Error fetching media:", error);

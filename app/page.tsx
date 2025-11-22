@@ -17,19 +17,22 @@ export default async function GalleryPage({ searchParams }: PageProps) {
     ? searchParams.filter 
     : "all";
   
-  // Fetch initial data on the server with filtering applied
+  // Fetch all available data on the server (no limit)
   const [allItems, types] = await Promise.all([
-    mediaItems(initialType, ITEMS_PER_PAGE, 0),
+    mediaItems(initialType, 100000, 0), // Fetch all items
     Promise.resolve(getTypes()),
   ]);
 
   // Apply server-side filtering
-  let initialItems = allItems;
+  let filteredItems = allItems;
   if (initialFilter === "image") {
-    initialItems = allItems.filter(item => item.type === "image");
+    filteredItems = allItems.filter(item => item.type === "image");
   } else if (initialFilter === "video") {
-    initialItems = allItems.filter(item => item.type === "video");
+    filteredItems = allItems.filter(item => item.type === "video");
   }
+  
+  // Return first page of filtered items
+  const initialItems = filteredItems.slice(0, ITEMS_PER_PAGE);
 
   return (
     <GalleryClient

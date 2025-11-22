@@ -343,6 +343,11 @@ export async function getMediaItems(type: string, limit: number = ITEMS_PER_PAGE
 export async function mediaItems(type: string, limit: number = ITEMS_PER_PAGE, offset: number = 0): Promise<MediaItem[]> {
   const items = await generateMediaItems(type);
   
+  // If limit is very large (>= 100000), return all items (no limit)
+  if (limit >= 100000) {
+    return items;
+  }
+  
   // Return the requested slice (items are already in newest-first order)
   return items.slice(offset, offset + limit);
 }
