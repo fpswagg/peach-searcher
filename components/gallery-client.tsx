@@ -5,6 +5,7 @@ import { MediaItem } from "@/types/media";
 import { MediaCard } from "@/components/media-card";
 import { MediaDialog } from "@/components/media-dialog";
 import { Image as ImageIcon, Video, Filter } from "lucide-react";
+import { getCachedMedia, saveCachedMedia, appendCachedMedia } from "@/lib/media-storage";
 
 const ITEMS_PER_PAGE = 24;
 
@@ -17,7 +18,9 @@ interface GalleryClientProps {
 }
 
 export function GalleryClient({ initialItems, initialType, types }: GalleryClientProps) {
-  const [allItems, setAllItems] = useState<MediaItem[]>(initialItems); // Store ALL items (unfiltered)
+  // Try to load from cache first, fallback to initialItems
+  const cachedItems = typeof window !== "undefined" ? getCachedMedia(initialType) : null;
+  const [allItems, setAllItems] = useState<MediaItem[]>(cachedItems || initialItems); // Store ALL items (unfiltered)
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [hasMoreItems, setHasMoreItems] = useState(true);
@@ -27,11 +30,94 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
   const [currentType, setCurrentType] = useState<string>(initialType);
   const observerTarget = useRef<HTMLDivElement>(null);
 
+  // Save initial items to cache if we have them and no cache exists
+  useEffect(() => {
+    if (typeof window !== "undefined" && initialItems.length > 0 && !cachedItems) {
+      saveCachedMedia(initialType, initialItems);
+    }
+  }, [initialType, initialItems, cachedItems]);
+
   // Fetch media items from API
   const fetchMediaItems = useCallback(async (type: string, limit: number, append: boolean = false, mediaFilter?: FilterType) => {
     try {
       if (!append) setIsLoading(true);
       else setIsLoadingMore(true);
+
+      // Check cache first if not appending
+      if (!append && typeof window !== "undefined") {
+        const cached = getCachedMedia(type);
+        if (cached && cached.length > 0) {
+          // Apply filter to cached items
+          let filteredCached = cached;
+          if (mediaFilter && mediaFilter !== "all") {
+            filteredCached = cached.filter((item: MediaItem) => item.type === mediaFilter);
+          }
+          
+          // Show first page of cached items immediately
+          const cachedPage = filteredCached.slice(0, limit);
+          setAllItems(cachedPage);
+          setHasMoreItems(filteredCached.length > limit || cached.length > limit);
+          setIsLoading(false);
+          
+          // Fetch fresh data in background to update cache
+          fetch(`/api/media?type=${encodeURIComponent(type)}&limit=${limit}&offset=0`)
+            .then(res => res.json())
+            .then(result => {
+              if (result.success && result.data) {
+                saveCachedMedia(type, result.data);
+                // Update items if user hasn't changed type/filter and we're still on first page
+                if (currentType === type && allItems.length <= limit) {
+                  let filtered = result.data;
+                  if (mediaFilter && mediaFilter !== "all") {
+                    filtered = result.data.filter((item: MediaItem) => item.type === mediaFilter);
+                  }
+                  setAllItems(filtered.slice(0, limit));
+                  setHasMoreItems(result.data.length >= limit);
+                }
+              }
+            })
+            .catch(err => console.error("Background fetch error:", err));
+          
+          return;
+        }
+      }
+
+      // For pagination, check cache first if appending
+      if (append && typeof window !== "undefined") {
+        const cached = getCachedMedia(type);
+        if (cached && cached.length > 0) {
+          // We need to find how many unfiltered items we've already displayed
+          // Since allItems might be filtered, we need to track this differently
+          // For now, we'll use a simpler approach: continue through cache and filter
+          const allCachedFiltered = mediaFilter && mediaFilter !== "all" 
+            ? cached.filter((item: MediaItem) => item.type === mediaFilter)
+            : cached;
+          
+          // Calculate how many filtered items we've shown
+          const filteredItemsShown = allItems.length;
+          const remainingFiltered = allCachedFiltered.slice(filteredItemsShown);
+          
+          if (remainingFiltered.length > 0) {
+            const itemsToAdd = remainingFiltered.slice(0, limit);
+            setAllItems((prev) => [...prev, ...itemsToAdd]);
+            setHasMoreItems(remainingFiltered.length > limit || cached.length > allCachedFiltered.length);
+            setIsLoadingMore(false);
+            
+            // Still fetch in background to update cache (use cache length as server offset)
+            const serverOffset = cached.length;
+            fetch(`/api/media?type=${encodeURIComponent(type)}&limit=${limit}&offset=${serverOffset}`)
+              .then(res => res.json())
+              .then(result => {
+                if (result.success && result.data && result.data.length > 0) {
+                  appendCachedMedia(type, result.data);
+                }
+              })
+              .catch(err => console.error("Background fetch error:", err));
+            
+            return;
+          }
+        }
+      }
 
       // Calculate offset based on ALL items (not filtered) - this is the server's view
       const offset = append ? allItems.length : 0;
@@ -50,6 +136,15 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
 
       if (result.success) {
         let newItems = result.data || [];
+        
+        // Save to cache (save all items from server, not filtered)
+        if (typeof window !== "undefined") {
+          if (append) {
+            appendCachedMedia(type, result.data);
+          } else {
+            saveCachedMedia(type, result.data);
+          }
+        }
         
         // Apply client-side filter if specified (for images/videos only)
         if (mediaFilter && mediaFilter !== "all") {
@@ -83,20 +178,47 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
     } catch (error) {
       console.error("Error fetching media:", error);
       setHasMoreItems(false);
-      // On network error, don't clear existing items
+      // On network error, try to use cache if available
+      if (!append && typeof window !== "undefined") {
+        const cached = getCachedMedia(type);
+        if (cached && cached.length > 0) {
+          let filteredCached = cached;
+          if (mediaFilter && mediaFilter !== "all") {
+            filteredCached = cached.filter((item: MediaItem) => item.type === mediaFilter);
+          }
+          setAllItems(filteredCached);
+        }
+      }
     } finally {
       setIsLoading(false);
       setIsLoadingMore(false);
     }
-  }, [allItems.length]);
+  }, [allItems.length, currentType]);
 
   // Reload when type or filter changes (but not on initial mount)
   const isInitialMount = useRef(true);
   useEffect(() => {
-    // Skip initial mount - we already have initialItems
+    // Skip initial mount - we already have initialItems or cached items
     if (isInitialMount.current) {
       isInitialMount.current = false;
       return;
+    }
+    
+    // Check cache first when switching types
+    if (typeof window !== "undefined") {
+      const cached = getCachedMedia(currentType);
+      if (cached && cached.length > 0) {
+        let filteredCached = cached;
+        if (filter !== "all") {
+          filteredCached = cached.filter((item: MediaItem) => item.type === filter);
+        }
+        // Show first page from cache
+        setAllItems(filteredCached.slice(0, ITEMS_PER_PAGE));
+        setHasMoreItems(filteredCached.length > ITEMS_PER_PAGE || cached.length > ITEMS_PER_PAGE);
+        // Still fetch in background to update cache
+        fetchMediaItems(currentType, ITEMS_PER_PAGE, false, filter);
+        return;
+      }
     }
     
     setAllItems([]);
@@ -156,48 +278,54 @@ export function GalleryClient({ initialItems, initialType, types }: GalleryClien
           <h1 className="text-5xl font-bold mb-3 text-base-content">Media Gallery</h1>
         </div>
 
-        {/* Type Selector */}
-        <div className="mb-8 flex justify-center">
-          <div className="join flex-wrap justify-center gap-2">
-            {types.map((type) => (
-              <button
-                key={type}
-                onClick={() => {
-                  setCurrentType(type);
-                  // Items will be cleared and reloaded in the useEffect
-                }}
-                className={`btn join-item ${currentType === type ? "btn-primary" : "btn-outline"}`}
-              >
-                {type}
-              </button>
-            ))}
+        {/* Filters */}
+        <div className="mb-8 flex flex-wrap justify-center items-end gap-4">
+          {/* Type Selector */}
+          <div className="form-control">
+            <label className="label pb-1">
+              <span className="label-text text-sm font-medium text-base-content/70">Category</span>
+            </label>
+            <select
+              value={currentType}
+              onChange={(e) => setCurrentType(e.target.value)}
+              className="select select-bordered w-full min-w-[180px] focus:select-primary"
+            >
+              {types.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
           </div>
-        </div>
 
-        {/* Media Type Filter */}
-        <div className="mb-8 flex justify-center">
-          <div className="join">
-            <button
-              onClick={() => setFilter("all")}
-              className={`btn join-item ${filter === "all" ? "btn-primary" : "btn-outline"}`}
-            >
-              <Filter className="w-4 h-4 mr-2" />
-              All
-            </button>
-            <button
-              onClick={() => setFilter("image")}
-              className={`btn join-item ${filter === "image" ? "btn-primary" : "btn-outline"}`}
-            >
-              <ImageIcon className="w-4 h-4 mr-2" />
-              Images
-            </button>
-            <button
-              onClick={() => setFilter("video")}
-              className={`btn join-item ${filter === "video" ? "btn-primary" : "btn-outline"}`}
-            >
-              <Video className="w-4 h-4 mr-2" />
-              Videos
-            </button>
+          {/* Media Type Filter */}
+          <div className="form-control">
+            <label className="label pb-1">
+              <span className="label-text text-sm font-medium text-base-content/70">Media Type</span>
+            </label>
+            <div className="join">
+              <button
+                onClick={() => setFilter("all")}
+                className={`btn join-item ${filter === "all" ? "btn-primary" : "btn-outline"}`}
+              >
+                <Filter className="w-4 h-4 mr-2" />
+                All
+              </button>
+              <button
+                onClick={() => setFilter("image")}
+                className={`btn join-item ${filter === "image" ? "btn-primary" : "btn-outline"}`}
+              >
+                <ImageIcon className="w-4 h-4 mr-2" />
+                Images
+              </button>
+              <button
+                onClick={() => setFilter("video")}
+                className={`btn join-item ${filter === "video" ? "btn-primary" : "btn-outline"}`}
+              >
+                <Video className="w-4 h-4 mr-2" />
+                Videos
+              </button>
+            </div>
           </div>
         </div>
 

@@ -12,14 +12,12 @@ export async function GET(request: NextRequest) {
     const reset = searchParams.get("reset") === "true";
     const refresh = searchParams.get("refresh") === "true";
 
-    // Clear cache if reset is requested (no-op but kept for compatibility)
+    // Clear cache if reset is requested (client-side cache clearing)
     if (reset) 
       clearMediaCache(type);
 
-    // Generate/refresh media items if requested
-    if (refresh)
-      await generateMediaItems(type);
-
+    // Fetch items - server always generates fresh data
+    // Client-side caching is handled by gallery-client component
     const items = await mediaItems(type, limit, offset);
     
     return NextResponse.json({

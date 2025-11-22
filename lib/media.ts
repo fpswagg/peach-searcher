@@ -72,48 +72,8 @@ function clearMediaItems(type?: string) {
   fs.writeFileSync(mediaPath, JSON.stringify(allMedia, null, 2));
 }*/
 
-let mediaData: Record<string, MediaItem[]> = {};
-
-function getAllMedia(): Record<string, MediaItem[]> {
-  return {...mediaData};
-}
-
-function getMedia(type: string): MediaItem[] {
-  return [...(mediaData[type] || [])];
-}
-
-function saveMediaItems(type: string, media: MediaItem[]) {
-  mediaData[type] = media;
-}
-
-function saveAllMediaItems(media: Record<string, MediaItem[]>) {
-  mediaData = {...media};
-}
-
-function appendMediaItems(type: string, media: MediaItem[]) {
-  if (!media || media.length === 0) return;
-  
-  const existing = mediaData[type] || [];
-  // Filter out duplicates by URL before appending
-  const existingUrls = new Set(existing.map(item => item.url));
-  const newItems = media.filter(item => !existingUrls.has(item.url));
-  
-  if (newItems.length > 0)
-    mediaData[type] = [...newItems, ...existing];
-
-  console.log(`Added ${newItems.length} to mediaData[${type}]`);
-}
-
-function appendAllMediaItems(media: Record<string, MediaItem[]>) {
-  Object.entries(media).forEach(([type, items]) => {
-    mediaData[type] = [...items, ...(mediaData[type] || [])];
-  });
-}
-
-function clearMediaItems(type?: string) {
-  if (type) delete mediaData[type];
-  else Object.keys(mediaData).forEach(key => delete mediaData[key]);
-}
+// Server-side storage removed - using browser localStorage on client side instead
+// See lib/media-storage.ts for client-side storage utilities
 
 export type MediaType = "image" | "video";
 
@@ -241,135 +201,102 @@ async function convertPostToMediaItem(redditPost: RedditPost, acceptsRedGifs: bo
 }
 
 // Fetch up to 100 recent posts for a type and convert them to media items
-export async function generateMediaItems(type?: string): Promise<MediaItem[]> {
-  const allTypes = type ? [type] : getTypes();
-  const allMedia = getAllMedia();
-  // const MAX_POSTS_PER_TYPE = 100;
-  let itemCounter = 0;
-
-  for (const currentType of allTypes) {
-    let typeSubreddits: string[] = [];
-    
-    // Handle "All" type - use _AllTypes from types.json
-    if (currentType === "All") {
-      const typeConfig = types["_AllTypes"] as (string|number)[] | undefined;
-      if (typeConfig && Array.isArray(typeConfig)) {
-        const allTypesList = typeConfig.filter((t): t is string => typeof t === "string");
-        // Collect all subreddits from all sub-types
-        for (const subType of allTypesList) {
-          if (!types[subType] || !Array.isArray(types[subType])) {
-            continue;
-          }
-          const subreddits = randomize(...types[subType]);
-          typeSubreddits.push(...subreddits.filter((s): s is string => typeof s === "string"));
+export async function generateMediaItems(type: string): Promise<MediaItem[]> {
+  let typeSubreddits: string[] = [];
+  
+  // Handle "All" type - use _AllTypes from types.json
+  if (type === "All") {
+    const typeConfig = types["_AllTypes"] as (string|number)[] | undefined;
+    if (typeConfig && Array.isArray(typeConfig)) {
+      const allTypesList = typeConfig.filter((t): t is string => typeof t === "string");
+      // Collect all subreddits from all sub-types
+      for (const subType of allTypesList) {
+        if (!types[subType] || !Array.isArray(types[subType])) {
+          continue;
         }
-      } else {
-        console.warn(`"_AllTypes" not found in types.json or is not an array`);
-        continue;
+        const subreddits = randomize(...types[subType]);
+        typeSubreddits.push(...subreddits.filter((s): s is string => typeof s === "string"));
       }
     } else {
-      // Skip if type doesn't exist in types object
-      if (!types[currentType] || !Array.isArray(types[currentType])) {
-        console.warn(`Type "${currentType}" not found in types.json or is not an array`);
+      console.warn(`"_AllTypes" not found in types.json or is not an array`);
+      return [];
+    }
+  } else {
+    // Skip if type doesn't exist in types object
+    if (!types[type] || !Array.isArray(types[type])) {
+      console.warn(`Type "${type}" not found in types.json or is not an array`);
+      return [];
+    }
+    const subreddits = randomize(...types[type]);
+    typeSubreddits = subreddits.filter((s): s is string => typeof s === "string");
+  }
+
+  // Remove duplicates from subreddits
+  const uniqueSubreddits = Array.from(new Set(typeSubreddits));
+  
+  if (uniqueSubreddits.length === 0) {
+    return [];
+  }
+
+  // Fetch posts from all subreddits
+  const acceptsRedGifs = !((types["_NoRedGifs"] || []) as string[]).includes(type);
+  const allPosts: MediaItem[] = [];
+  const existingUrls = new Set<string>();
+  let itemCounter = 0;
+
+  // Fetch posts from each subreddit
+  for (const subreddit of uniqueSubreddits) {
+    try {
+      const redditResponse = await getRedditPosts(subreddit);
+      if (redditResponse.error || !redditResponse.data || !Array.isArray(redditResponse.data)) {
+        console.error(`Error fetching posts from ${subreddit}:`, redditResponse.error);
         continue;
       }
-      const subreddits = randomize(...types[currentType]);
-      typeSubreddits = subreddits.filter((s): s is string => typeof s === "string");
-    }
 
-    // Remove duplicates from subreddits
-    const uniqueSubreddits = Array.from(new Set(typeSubreddits));
-    
-    if (uniqueSubreddits.length === 0) {
-      continue;
-    }
+      // Filter posts that are valid media and convert them
+      const validPosts = redditResponse.data.filter(
+        post => post.url && (!hasIDRG(post.url) || acceptsRedGifs) && (post.is_video || post.is_reddit_media_domain)
+      );
 
-    // Fetch posts from all subreddits
-    const acceptsRedGifs = !((types["_NoRedGifs"] || []) as string[]).includes(currentType);
-    const allPosts: MediaItem[] = [];
-    const existingMedia = allMedia[currentType] || [];
-    const existingUrls = new Set(existingMedia.map(x => x.url));
-
-    // Fetch posts from each subreddit (up to 100 per subreddit, but we'll limit total to 100)
-    for (const subreddit of uniqueSubreddits) {
-      // if (allPosts.length >= MAX_POSTS_PER_TYPE) {
-      //   break;
-      // }
-
-      try {
-        const redditResponse = await getRedditPosts(subreddit);
-        if (redditResponse.error || !redditResponse.data || !Array.isArray(redditResponse.data)) {
-          console.error(`Error fetching posts from ${subreddit}:`, redditResponse.error);
+      // Convert posts to media items
+      for (const redditPost of validPosts) {
+        // Skip if already exists
+        if (existingUrls.has(redditPost.url)) {
           continue;
         }
 
-        // Filter posts that are valid media and convert them
-        const validPosts = redditResponse.data.filter(
-          post => post.url && (!hasIDRG(post.url) || acceptsRedGifs) && (post.is_video || post.is_reddit_media_domain)
-        );
-
-        // Convert posts to media items
-        for (const redditPost of validPosts) {
-          // if (allPosts.length >= MAX_POSTS_PER_TYPE) {
-          //   break;
-          // }
-
-          // Skip if already exists
-          if (existingUrls.has(redditPost.url)) {
-            continue;
-          }
-
-          const mediaItem = await convertPostToMediaItem(redditPost, acceptsRedGifs, itemCounter++);
-          if (mediaItem && !existingUrls.has(mediaItem.url)) {
-            allPosts.push(mediaItem);
-            existingUrls.add(mediaItem.url); // Track to avoid duplicates within this batch
-          }
+        const mediaItem = await convertPostToMediaItem(redditPost, acceptsRedGifs, itemCounter++);
+        if (mediaItem && !existingUrls.has(mediaItem.url)) {
+          allPosts.push(mediaItem);
+          existingUrls.add(mediaItem.url); // Track to avoid duplicates within this batch
         }
-      } catch (error) {
-        console.error(`Error processing subreddit ${subreddit}:`, error);
-        continue;
       }
-    }
-
-    // Limit to MAX_POSTS_PER_TYPE and append to media.json
-    // const postsToAppend = allPosts.slice(0, MAX_POSTS_PER_TYPE);
-    // if (postsToAppend.length > 0) {
-    if (allPosts.length > 0) {
-      appendMediaItems(currentType, allPosts);
+    } catch (error) {
+      console.error(`Error processing subreddit ${subreddit}:`, error);
+      continue;
     }
   }
 
-  return [];
+  // Return generated items (newest first)
+  return allPosts.reverse();
 }
 
 export async function getMediaItems(type: string, limit: number = ITEMS_PER_PAGE): Promise<MediaItem[]> {
-  await generateMediaItems(type);
-  const mediaList = getMedia(type);
-  return mediaList.slice(0, limit);
+  const items = await generateMediaItems(type);
+  return items.slice(0, limit);
 }
 
 export async function mediaItems(type: string, limit: number = ITEMS_PER_PAGE, offset: number = 0): Promise<MediaItem[]> {
-  await generateMediaItems(type);
+  const items = await generateMediaItems(type);
   
-  // Get all media items for the type from media.json
-  const allMediaList = getMedia(type);
-  
-  // Reverse the list to show newest first
-  const reversedList = allMediaList.slice().reverse();
-
-  console.log({
-    cutArray: reversedList.slice(offset, offset + limit).map(x=>x.url),
-    array: reversedList.map(x=>x.url),
-    offset, limit
-  })
-  
-  // Return the requested slice
-  return reversedList.slice(offset, offset + limit);
+  // Return the requested slice (items are already in newest-first order)
+  return items.slice(offset, offset + limit);
 }
 
 // Clear cache for a specific type (useful when switching types)
+// This is a no-op on server side - client should use clearCachedMedia from lib/media-storage.ts
 export function clearMediaCache(type?: string) {
-  // No-op since we're not using server-side cache anymore
+  // Client-side cache clearing is handled by lib/media-storage.ts
   // This function is kept for API compatibility
 }
 
